@@ -1,0 +1,6 @@
+{
+  "images" : [
+    { "filename" : "cardio_stepper.png", "idiom" : "universal" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

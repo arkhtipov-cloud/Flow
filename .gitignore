@@ -1,0 +1,36 @@
+# Xcode and Swift build output
+DerivedData/
+build/
+Build/
+.build/
+.swiftpm/
+*.app/
+*.ipa
+*.dSYM/
+*.xcarchive/
+*.xcresult/
+*.hmap
+*.log
+
+# Per-user IDE state and temporary files
+xcuserdata/
+*.xcuserstate
+.DS_Store
+*.swp
+*.tmp
+*.temp
+*~
+
+# Local app data and credentials
+workouts.json
+ExerciseImages/
+*.sqlite
+*.sqlite-*
+*.db
+.env
+.env.*
+*.p12
+*.mobileprovision
+*.pem
+*.key
+*.p8
