@@ -71,7 +71,7 @@ struct MuscleTarget: Codable, Hashable {
     }
 }
 
-struct MuscleMap {
+struct MuscleMap: Codable, Hashable {
     let primaryGroup: ExerciseCategory?
     let primaryAccent: String?
     let secondaryMuscles: [MuscleTarget]
@@ -281,15 +281,17 @@ struct WorkoutExercise: Identifiable, Codable, Hashable {
     var name: String
     var sets: [SetEntry] = [SetEntry()]
     var trackingType: ExerciseTrackingType = .weightReps
+    var muscleMapSnapshot: MuscleMap?
 
-    private enum CodingKeys: String, CodingKey { case id, exerciseID, name, sets, trackingType }
+    private enum CodingKeys: String, CodingKey { case id, exerciseID, name, sets, trackingType, muscleMapSnapshot }
 
-    init(id: UUID = UUID(), exerciseID: UUID, name: String, sets: [SetEntry] = [SetEntry()], trackingType: ExerciseTrackingType = .weightReps) {
+    init(id: UUID = UUID(), exerciseID: UUID, name: String, sets: [SetEntry] = [SetEntry()], trackingType: ExerciseTrackingType = .weightReps, muscleMapSnapshot: MuscleMap? = nil) {
         self.id = id
         self.exerciseID = exerciseID
         self.name = name
         self.sets = sets
         self.trackingType = trackingType
+        self.muscleMapSnapshot = muscleMapSnapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -299,6 +301,7 @@ struct WorkoutExercise: Identifiable, Codable, Hashable {
         name = try values.decode(String.self, forKey: .name)
         sets = try values.decodeIfPresent([SetEntry].self, forKey: .sets) ?? []
         trackingType = try values.decodeIfPresent(ExerciseTrackingType.self, forKey: .trackingType) ?? .weightReps
+        muscleMapSnapshot = try values.decodeIfPresent(MuscleMap.self, forKey: .muscleMapSnapshot)
     }
 }
 
@@ -514,6 +517,12 @@ final class WorkoutStore: ObservableObject {
         if record.splitTemplateID != nil {
             record.splitCompletionRecorded = records.first(where: { $0.id == record.id })?.splitCompletionRecorded
         }
+        let previous = records.first(where: { $0.id == record.id })
+        for index in record.exercises.indices where record.exercises[index].muscleMapSnapshot == nil {
+            let item = record.exercises[index]
+            record.exercises[index].muscleMapSnapshot = previous?.exercises.first(where: { $0.id == item.id })?.muscleMapSnapshot
+                ?? muscleMap(for: item.exerciseID)
+        }
         if let index = records.firstIndex(where: { $0.id == record.id }) {
             records[index] = record
         } else {
@@ -627,6 +636,12 @@ final class WorkoutStore: ObservableObject {
                 return ExerciseDefinition(id: exercise.id, name: standard.name, category: standard.category, isCustom: false, illustrationID: standard.illustrationID, trackingType: standard.trackingType, muscleAccent: standard.muscleAccent, secondaryMuscles: standard.secondaryMuscles)
             }
             exercises = ExerciseDefinition.builtIn.filter { standard in !legacy.contains(where: { $0.name == standard.name }) } + legacy
+            for recordIndex in records.indices {
+                for itemIndex in records[recordIndex].exercises.indices where records[recordIndex].exercises[itemIndex].muscleMapSnapshot == nil {
+                    let id = records[recordIndex].exercises[itemIndex].exerciseID
+                    records[recordIndex].exercises[itemIndex].muscleMapSnapshot = muscleMap(for: id)
+                }
+            }
             weeklyGoal = max(1, min(7, saved.weeklyGoal))
         } catch CocoaError.fileReadNoSuchFile {
             // A new installation has no file yet.

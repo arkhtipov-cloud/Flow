@@ -499,7 +499,8 @@ struct WorkoutHistoryView: View {
 private enum HistorySummary {
     static func groups(for workout: WorkoutRecord, definitions: [ExerciseDefinition]) -> String {
         let categories = workout.exercises.compactMap { exercise in
-            definitions.first(where: { $0.id == exercise.exerciseID })?.category.rawValue
+            (exercise.muscleMapSnapshot?.primaryGroup
+                ?? definitions.first(where: { $0.id == exercise.exerciseID })?.category)?.rawValue
         }
         let unique = categories.reduce(into: [String]()) { result, category in
             if !result.contains(category) { result.append(category) }

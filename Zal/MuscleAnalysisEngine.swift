@@ -263,7 +263,7 @@ struct MuscleAnalysisSnapshot {
                     }
                     continue
                 }
-                guard let map = maps[exercise.exerciseID], let primary = map.primaryGroup else { continue }
+                guard let map = exercise.muscleMapSnapshot ?? maps[exercise.exerciseID], let primary = map.primaryGroup else { continue }
                 let direct = MuscleTarget(primary)
                 let directAccent = map.primaryAccent.map { MuscleTarget(primary, $0) }
                 let secondary = Set(map.secondaryMuscles.filter { $0.category != .cardio && $0 != directAccent })
