@@ -1,23 +1,28 @@
 import SwiftUI
 
-private enum Palette {
-    static let ink = Color(red: 0.055, green: 0.055, blue: 0.055)
-    static let muted = Color(red: 0.59, green: 0.59, blue: 0.61)
-    static let canvas = Color(red: 0.985, green: 0.985, blue: 0.988)
-    static let surface = Color.white
-    static let soft = Color(red: 0.955, green: 0.955, blue: 0.96)
+private enum Palette
+{
+    static let ink = ThemePalette.ink
+    static let muted = ThemePalette.muted
+    static let canvas = ThemePalette.canvas
+    static let surface = ThemePalette.surface
+    static let soft = ThemePalette.soft
 }
 
-struct HomeView: View {
+struct HomeView: View
+{
     @EnvironmentObject private var store: WorkoutStore
     @Binding var selectedTab: MainTab
     @State private var destination: HomeDestination?
     @State private var period: StatsPeriod = .week
     private let horizontalPadding: CGFloat = 18
 
-    var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 12) {
+    var body: some View
+    {
+        ScrollView(showsIndicators: false)
+        {
+            VStack(spacing: 12)
+            {
                 header
                     .padding(.top, 10)
                     .padding(.bottom, 2)
@@ -40,9 +45,12 @@ struct HomeView: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: -2) {
+    private var header: some View
+    {
+        HStack(alignment: .center)
+        {
+            VStack(alignment: .leading, spacing: -2)
+            {
                 Text("GymTreker")
                     .font(.system(size: 39, weight: .bold, design: .default))
                     .tracking(-1.3)
@@ -52,7 +60,8 @@ struct HomeView: View {
                     .foregroundStyle(Palette.muted)
             }
             Spacer()
-            Button { destination = .settings } label: {
+            Button { destination = .settings } label:
+            {
                 Image(systemName: "gearshape")
                     .font(.system(size: 21, weight: .medium))
                     .foregroundStyle(Palette.ink)
@@ -63,16 +72,19 @@ struct HomeView: View {
         }
     }
 
-    private var quickAccess: some View {
-        Button { selectedTab = .workouts } label: {
-            HStack {
+    private var quickAccess: some View
+    {
+        Button { selectedTab = .workouts } label:
+        {
+            HStack
+            {
                 Text("Перейти к тренировкам")
                     .font(.system(size: 17, weight: .semibold))
                 Spacer()
                 Image(systemName: "arrow.right")
                     .font(.system(size: 18, weight: .medium))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(ThemePalette.onAccent)
             .padding(.horizontal, 22)
             .frame(maxWidth: .infinity)
             .frame(height: 70)
@@ -81,11 +93,14 @@ struct HomeView: View {
         .buttonStyle(PressableCardStyle())
     }
 
-    private var streakCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var streakCard: some View
+    {
+        VStack(alignment: .leading, spacing: 10)
+        {
             Text("Серия недель")
                 .font(.system(size: 16, weight: .semibold))
-            HStack(spacing: 12) {
+            HStack(spacing: 12)
+            {
                 Image(systemName: "flame.fill")
                     .font(.system(size: 22))
                 Text("\(store.streakWeeks)")
@@ -95,7 +110,9 @@ struct HomeView: View {
                     .foregroundStyle(Palette.muted)
                 Spacer(minLength: 4)
                 HStack(spacing: 5) {
-                    ForEach(0..<7, id: \.self) { index in
+                    ForEach(0..<7, id: \.self)
+                    {
+                        index in
                         Circle()
                             .fill(index < min(store.streakWeeks, 7) ? Palette.ink : Palette.soft)
                             .frame(width: 9, height: 9)
@@ -109,9 +126,12 @@ struct HomeView: View {
         .cardSurface()
     }
 
-    private var weeklyCard: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
+    private var weeklyCard: some View
+    {
+        HStack(spacing: 8)
+        {
+            VStack(alignment: .leading, spacing: 4)
+            {
                 Text("Прогресс недели")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Palette.ink)
@@ -120,7 +140,8 @@ struct HomeView: View {
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 2)
-            HStack(spacing: store.weeklyGoal > 5 ? 4 : 7) {
+            HStack(spacing: store.weeklyGoal > 5 ? 4 : 7)
+            {
                 ForEach(0..<store.weeklyGoal, id: \.self) { index in
                     WeekProgressRing(style: index < store.thisWeekCount ? .complete : .empty)
                 }
@@ -151,7 +172,7 @@ struct HomeView: View {
                             .foregroundStyle(period == option ? Palette.ink : Palette.muted)
                             .frame(maxWidth: .infinity)
                             .frame(height: 30)
-                            .background(period == option ? Color.white : Color.clear, in: Capsule())
+                            .background(period == option ? Palette.surface : Color.clear, in: Capsule())
                     }
                     .accessibilityAddTraits(period == option ? .isSelected : [])
                 }
@@ -163,7 +184,7 @@ struct HomeView: View {
                 ForEach(snapshot.buckets) { bucket in
                     VStack(spacing: 5) {
                         Capsule()
-                            .fill(bucket.count > 0 ? Palette.ink : Color(white: 0.85))
+                            .fill(bucket.count > 0 ? Palette.ink : ThemePalette.track)
                             .frame(width: period == .year ? 7 : 9, height: CGFloat(max(8, min(49, bucket.count * 21))))
                             .frame(height: 43, alignment: .bottom)
                         Text(bucket.label)
@@ -253,12 +274,12 @@ private struct WeekProgressRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color(white: 0.88), lineWidth: 5)
+                .stroke(ThemePalette.track, lineWidth: 5)
             if style == .complete {
                 Circle().fill(Palette.ink).padding(5)
                 Image(systemName: "checkmark")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ThemePalette.onAccent)
             }
         }
         .frame(width: 31, height: 31)

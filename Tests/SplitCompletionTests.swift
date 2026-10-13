@@ -86,6 +86,7 @@ struct SplitCompletionTests {
         expect(store.nextSplitTemplate?.id == second.id,
                "Completing a previously skipped draft must not advance the current template")
         testHistoricalMuscleMaps()
+        testBuiltInMuscleMaps()
         testExerciseTrends()
         testInsightWording()
         print("PASS: split completion, continuation, editing and skipping")
@@ -250,5 +251,105 @@ struct SplitCompletionTests {
             .groups.first { $0.target == MuscleTarget(.back) }?.directSets == 1,
                "Only the classifiable legacy activity belongs in muscle analysis")
         print("PASS: historical muscle maps, edit, delete, reload and legacy JSON")
+    }
+
+    static func testBuiltInMuscleMaps() {
+        let builtIn = ExerciseDefinition.builtIn
+        expect(Set(builtIn.map(\.id)).count == builtIn.count, "Built-in UUIDs must remain unique")
+        for exercise in builtIn {
+            expect(exercise.category == .cardio || exercise.category.accents.contains(exercise.muscleAccent ?? ""),
+                   "Every strength exercise needs a valid primary accent: \(exercise.name)")
+            expect(Set(exercise.secondaryMuscles).count == exercise.secondaryMuscles.count &&
+                   exercise.secondaryMuscles.allSatisfy { $0.category != .cardio && $0.category.accents.contains($0.accent ?? "") },
+                   "Secondary accents must be valid and unique: \(exercise.name)")
+            if exercise.category == .cardio {
+                expect(exercise.trackingType == .cardio && exercise.secondaryMuscles.isEmpty,
+                       "Cardio must not receive strength muscle targets: \(exercise.name)")
+            }
+        }
+        func definition(_ name: String) -> ExerciseDefinition {
+            ExerciseDefinition.builtIn.first { $0.name == name }!
+        }
+        func targets(_ name: String) -> Set<MuscleTarget> {
+            Set(definition(name).secondaryMuscles)
+        }
+        let pressTargets: Set<MuscleTarget> = [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Передняя дельта")]
+        for name in ["Жим штанги лёжа", "Жим гантелей лёжа", "Жим гантелей на наклонной скамье", "Отжимания на брусьях"] {
+            expect(targets(name) == pressTargets, "Chest presses must include triceps and front delts: \(name)")
+        }
+        expect(targets("Сведение рук в кроссовере").isEmpty, "Cable fly must not count stabilizers")
+
+        let verticalTargets: Set<MuscleTarget> = [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")]
+        for name in ["Подтягивания", "Подтягивания с весом", "Тяга верхнего блока"] {
+            expect(targets(name) == verticalTargets, "Vertical pulls must count elbow flexors without grip stabilizers: \(name)")
+        }
+        for (name, otherBackAccent) in [("Тяга гантели одной рукой", "Средняя часть спины"),
+                                         ("Тяга горизонтального блока", "Широчайшие"),
+                                         ("Тяга штанги к поясу", "Широчайшие")] {
+            expect(targets(name) == verticalTargets.union([MuscleTarget(.back, otherBackAccent), MuscleTarget(.shoulders, "Задняя дельта")]),
+                   "Horizontal rows must include the other back accent and rear delt: \(name)")
+        }
+        expect(targets("Шраги с гантелями").isEmpty && targets("Шраги со штангой").isEmpty,
+               "Shrugs must have no artificial secondary targets")
+        for name in ["Приседания со штангой", "Жим ногами", "Румынская тяга"] {
+            expect(targets(name) == [MuscleTarget(.legs, "Ягодичные")], "Leg compounds must include glutes: \(name)")
+        }
+        for name in ["Жим гантелей сидя", "Жим штанги стоя"] {
+            expect(targets(name) == [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Средняя дельта")],
+                   "Overhead presses must include triceps and middle delts: \(name)")
+        }
+        expect(targets("Тяга штанги к подбородку") == [MuscleTarget(.back, "Трапеции")] &&
+               targets("Разведение гантелей в наклоне") == [MuscleTarget(.back, "Средняя часть спины")],
+               "Shoulder compounds must include their relevant back synergist")
+        for name in ["Подъём штанги на бицепс", "Подъём гантелей на бицепс"] {
+            expect(targets(name) == [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.forearms, "Плечелучевая")],
+                   "Ordinary curls must include brachialis and brachioradialis: \(name)")
+        }
+        for name in ["Обратные сгибания со штангой", "Обратные сгибания рук в кроссовере"] {
+            expect(definition(name).category == .forearms && definition(name).muscleAccent == "Плечелучевая" &&
+                   targets(name) == [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.biceps, "Бицепс")],
+                   "Reverse curls must keep their primary and two distinct biceps accents: \(name)")
+        }
+        for name in ["Разгибание рук на блоке", "Французский жим", "Разгибание руки из-за головы",
+                     "Сгибание запястий со штангой", "Разгибание запястий со штангой"] {
+            expect(targets(name).isEmpty, "Isolation exercises must not gain artificial targets: \(name)")
+        }
+
+        let calendar = Calendar(identifier: .iso8601)
+        let date = calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12))!
+        let analysisDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 12))!
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("builtin-map-tests-\(UUID().uuidString).json")
+        let store = WorkoutStore(fileURL: file)
+        let pullup = definition("Подтягивания")
+        let reverse = definition("Обратные сгибания рук в кроссовере")
+        let row = definition("Тяга горизонтального блока")
+        let cardio = definition("Бег")
+        let oldMap = MuscleMap(primaryGroup: .back, primaryAccent: "Широчайшие", secondaryMuscles: [MuscleTarget(.biceps, "Бицепс")])
+        let record = WorkoutRecord(title: "Карта", date: date, exercises: [
+            WorkoutExercise(exerciseID: pullup.id, name: pullup.name, sets: [SetEntry(repetitions: 8)], trackingType: .reps),
+            WorkoutExercise(exerciseID: reverse.id, name: reverse.name, sets: [SetEntry(weight: 20, repetitions: 8)]),
+            WorkoutExercise(exerciseID: row.id, name: row.name, sets: [SetEntry(weight: 40, repetitions: 8)]),
+            WorkoutExercise(exerciseID: cardio.id, name: cardio.name, sets: [SetEntry(durationSeconds: 1200)], trackingType: .cardio)
+        ])
+        store.upsert(record)
+        expect(store.records[0].exercises[1].muscleMapSnapshot?.secondaryMuscles == reverse.secondaryMuscles &&
+               store.records[0].exercises[3].muscleMapSnapshot?.primaryGroup == nil,
+               "New records must capture current maps; cardio has no strength muscle")
+        let result = MuscleAnalysisEngine.analyze(store: store, period: .month, relativeTo: analysisDate)
+        expect(result.groups.first { $0.target == MuscleTarget(.biceps) }?.indirectSets == 3 &&
+               result.groups.first { $0.target == MuscleTarget(.back) }?.directSets == 2 &&
+               result.accents.first { $0.target == MuscleTarget(.back, "Широчайшие") }?.indirectSets == 1,
+               "Multiple accents in one muscle group must count once per set at group level")
+
+        var historical = record
+        historical.id = UUID()
+        historical.exercises = [WorkoutExercise(exerciseID: pullup.id, name: pullup.name,
+                                                sets: [SetEntry(repetitions: 6)], trackingType: .reps,
+                                                muscleMapSnapshot: oldMap)]
+        store.upsert(historical)
+        let reloaded = WorkoutStore(fileURL: file)
+        expect(reloaded.records.first { $0.id == historical.id }?.exercises[0].muscleMapSnapshot == oldMap,
+               "Existing historical snapshots must never be replaced by current built-in maps")
+        print("PASS: built-in muscle maps, indirect deduplication and historical snapshots")
     }
 }

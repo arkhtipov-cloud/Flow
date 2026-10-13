@@ -3,9 +3,9 @@ import Charts
 import PhotosUI
 
 private enum PageStyle {
-    static let ink = Color(white: 0.06)
-    static let muted = Color(white: 0.58)
-    static let canvas = Color(red: 0.985, green: 0.985, blue: 0.988)
+    static let ink = ThemePalette.ink
+    static let muted = ThemePalette.muted
+    static let canvas = ThemePalette.canvas
 }
 
 private extension View {
@@ -62,7 +62,7 @@ struct WorkoutEditorView: View {
             ForEach($record.exercises) { $exercise in
                 Section {
                     ForEach(Array(exercise.sets.indices), id: \.self) { index in
-                        SetInputRow(entry: $exercise.sets[index], number: index + 1, trackingType: exercise.trackingType, previousEntry: index > 0 ? exercise.sets[index - 1] : nil, focusedInput: $focusedInput)
+                        SetInputRow(entry: $exercise.sets[index], number: index + 1, trackingType: exercise.trackingType, previousEntry: index > 0 ? exercise.sets[index - 1] : nil, inCard: false, focusedInput: $focusedInput)
                         .id(exercise.sets[index].id)
                         .swipeActions {
                             if exercise.trackingType != .cardio {
@@ -144,11 +144,28 @@ private enum SetInputField: Hashable {
     case distance(UUID)
 }
 
+private struct WorkoutCardFieldStyle: ViewModifier {
+    let inCard: Bool
+
+    func body(content: Content) -> some View {
+        if inCard {
+            content
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 36)
+                .background(ThemePalette.raised, in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            content.textFieldStyle(.roundedBorder)
+        }
+    }
+}
+
 private struct SetInputRow: View {
     @Binding var entry: SetEntry
     let number: Int
     let trackingType: ExerciseTrackingType
     let previousEntry: SetEntry?
+    let inCard: Bool
     @FocusState.Binding var focusedInput: SetInputField?
     @State private var weightText = ""
     @State private var repetitionsText = ""
@@ -168,7 +185,7 @@ private struct SetInputRow: View {
                             .keyboardType(.numberPad)
                             .focused($focusedInput, equals: .minutes(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Минуты кардио")
                         Text(":")
                             .font(.system(size: 18, weight: .medium, design: .monospaced))
@@ -176,7 +193,7 @@ private struct SetInputRow: View {
                             .keyboardType(.numberPad)
                             .focused($focusedInput, equals: .seconds(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Секунды кардио")
                     }
                     Text("Дистанция, км")
@@ -185,7 +202,7 @@ private struct SetInputRow: View {
                     TextField("Необязательно", text: $distanceText)
                         .keyboardType(.decimalPad)
                         .focused($focusedInput, equals: .distance(entry.id))
-                        .textFieldStyle(.roundedBorder)
+                        .modifier(WorkoutCardFieldStyle(inCard: inCard))
                         .accessibilityLabel("Дистанция в километрах")
                 }
             } else {
@@ -199,7 +216,7 @@ private struct SetInputRow: View {
                             .keyboardType(.decimalPad)
                             .focused($focusedInput, equals: .weight(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Вес, подход \(number)")
                     }
                     if trackingType == .duration {
@@ -207,7 +224,7 @@ private struct SetInputRow: View {
                             .keyboardType(.numberPad)
                             .focused($focusedInput, equals: .minutes(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Минуты, подход \(number)")
                         Text(":")
                             .font(.system(size: 18, weight: .medium, design: .monospaced))
@@ -215,14 +232,14 @@ private struct SetInputRow: View {
                             .keyboardType(.numberPad)
                             .focused($focusedInput, equals: .seconds(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Секунды, подход \(number)")
                     } else {
                         TextField(previousEntry.map { $0.repetitions > 0 ? String($0.repetitions) : "Повторы" } ?? "Повторы", text: $repetitionsText)
                             .keyboardType(.numberPad)
                             .focused($focusedInput, equals: .repetitions(entry.id))
                             .multilineTextAlignment(.center)
-                            .textFieldStyle(.roundedBorder)
+                            .modifier(WorkoutCardFieldStyle(inCard: inCard))
                             .accessibilityLabel("Повторы, подход \(number)")
                     }
                 }
@@ -289,7 +306,7 @@ struct ExerciseLibraryView: View {
         case .triceps:
             return [(nil, ["Разгибание рук на блоке", "Французский жим", "Разгибание руки из-за головы"])]
         case .forearms:
-            return [("СГИБАТЕЛИ ПРЕДПЛЕЧЬЯ", ["Сгибание запястий со штангой"]), ("РАЗГИБАТЕЛИ ПРЕДПЛЕЧЬЯ", ["Разгибание запястий со штангой"]), ("ПЛЕЧЕЛУЧЕВАЯ", ["Обратные сгибания со штангой"])]
+            return [("СГИБАТЕЛИ ПРЕДПЛЕЧЬЯ", ["Сгибание запястий со штангой"]), ("РАЗГИБАТЕЛИ ПРЕДПЛЕЧЬЯ", ["Разгибание запястий со штангой"]), ("ПЛЕЧЕЛУЧЕВАЯ", ["Обратные сгибания со штангой", "Обратные сгибания рук в кроссовере"])]
         case .abs:
             return [("ПРЯМАЯ МЫШЦА ЖИВОТА", ["Скручивания", "Подъём ног", "Подъём ног в висе"]), ("КОР", ["Планка"])]
         case .cardio:
@@ -322,10 +339,10 @@ struct ExerciseLibraryView: View {
                         Button { selectedCategory = category } label: {
                             Text(category.rawValue)
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(selectedCategory == category ? .white : PageStyle.ink)
+                                .foregroundStyle(selectedCategory == category ? ThemePalette.onAccent : PageStyle.ink)
                                 .padding(.horizontal, 16)
                                 .frame(height: 38)
-                                .background(selectedCategory == category ? PageStyle.ink : Color.white, in: Capsule())
+                                .background(selectedCategory == category ? PageStyle.ink : ThemePalette.surface, in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -434,18 +451,20 @@ struct ExerciseLibraryView: View {
             if let customImage = store.customIllustration(for: exercise) {
                 Image(uiImage: customImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
             } else if exercise.illustrationID.hasPrefix("chest_") || exercise.illustrationID.hasPrefix("back_") || exercise.illustrationID.hasPrefix("legs_") || exercise.illustrationID.hasPrefix("shoulders_") || exercise.illustrationID.hasPrefix("biceps_") || exercise.illustrationID.hasPrefix("triceps_") || exercise.illustrationID.hasPrefix("forearms_") || exercise.illustrationID.hasPrefix("abs_") || exercise.illustrationID.hasPrefix("cardio_") {
                 Image(exercise.illustrationID)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
             } else {
                 Image(systemName: exercise.illustrationID)
                     .font(.system(size: size * 0.42, weight: .light))
+                    .foregroundStyle(Color.black)
             }
         }
         .frame(width: size, height: size)
-        .background(Color(white: 0.95), in: RoundedRectangle(cornerRadius: size * 0.22))
+        .background(Color(white: 0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 struct WorkoutHistoryView: View {
@@ -654,7 +673,7 @@ private struct WorkoutHistoryDetailView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 18))
                     }
                     ForEach(workout.exercises) { exercise in
                         NavigationLink {
@@ -719,7 +738,7 @@ private struct WorkoutHistoryDetailView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 18))
     }
 }
 
@@ -868,7 +887,10 @@ struct WorkoutsTabView: View {
     @State private var noteDraft = ""
     @State private var selectedDate = Calendar.current.startOfDay(for: .now)
     @State private var expandedExerciseID: UUID?
+    @State private var pendingScrollSetID: UUID?
     @State private var dayTransitionDirection = 1
+    @State private var weekDragOffset: CGFloat = 0
+    @State private var isWeekSettling = false
     @FocusState private var focusedInput: SetInputField?
 
     private var calendar: Calendar {
@@ -902,7 +924,7 @@ struct WorkoutsTabView: View {
                     Image(systemName: "gearshape")
                         .font(.system(size: 21, weight: .medium))
                         .frame(width: 46, height: 46)
-                        .background(Color(white: 0.94), in: Circle())
+                        .background(ThemePalette.soft, in: Circle())
                 }
                 .accessibilityLabel("Настройки")
             }
@@ -910,7 +932,9 @@ struct WorkoutsTabView: View {
 
             calendarCard
                 .padding(.top, 24)
+                .padding(.bottom, 12)
 
+            ScrollViewReader { scrollProxy in
             List {
                 if let next = store.nextSplitTemplate {
                     Section {
@@ -992,9 +1016,14 @@ struct WorkoutsTabView: View {
                                             .rotationEffect(.degrees(expandedExerciseID == exercise.id ? 90 : 0))
                                     }
                                     .frame(minHeight: 56)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets())
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(exerciseCardBackground(top: true, bottom: expandedExerciseID != exercise.id || (exercise.trackingType == .cardio && exercise.sets.isEmpty && previousSplitHint(for: exercise, in: workout) == nil)))
                                 .swipeActions {
                                     Button("Удалить", role: .destructive) {
                                         removeExercise(exercise, from: workout)
@@ -1005,9 +1034,19 @@ struct WorkoutsTabView: View {
                                         Text(hint)
                                             .font(.system(size: 13))
                                             .foregroundStyle(PageStyle.muted)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .listRowInsets(EdgeInsets())
+                                            .listRowSeparator(.hidden)
+                                            .listRowBackground(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && exercise.sets.isEmpty))
                                     }
                                     ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, entry in
-                                        SetInputRow(entry: setBinding(workout: workout, exercise: exercise, set: entry), number: index + 1, trackingType: exercise.trackingType, previousEntry: index > 0 ? exercise.sets[index - 1] : nil, focusedInput: $focusedInput)
+                                        SetInputRow(entry: setBinding(workout: workout, exercise: exercise, set: entry), number: index + 1, trackingType: exercise.trackingType, previousEntry: index > 0 ? exercise.sets[index - 1] : nil, inCard: true, focusedInput: $focusedInput)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .listRowInsets(EdgeInsets())
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && index == exercise.sets.count - 1))
                                     .swipeActions {
                                         if exercise.trackingType != .cardio {
                                             Button("Удалить", role: .destructive) {
@@ -1015,15 +1054,24 @@ struct WorkoutsTabView: View {
                                             }
                                         }
                                     }
+                                    .id(entry.id)
                                     }
                                     if exercise.trackingType != .cardio {
                                         Button {
+                                            focusedInput = nil
                                             appendSet(to: exercise, in: workout)
                                         } label: {
                                             Label("Подход", systemImage: "plus")
                                                 .font(.system(size: 15, weight: .semibold))
-                                                .frame(minHeight: 44)
+                                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                                .contentShape(Rectangle())
                                         }
+                                        .buttonStyle(.plain)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 4)
+                                        .listRowInsets(EdgeInsets())
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(exerciseCardBackground(top: false, bottom: true))
                                     }
                                 }
                             }
@@ -1032,12 +1080,12 @@ struct WorkoutsTabView: View {
                 }
             }
             .listStyle(.plain)
+            .listSectionSpacing(10)
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
-            .simultaneousGesture(daySwipeGesture)
-            .onTapGesture { focusedInput = nil }
+            .background(PageStyle.canvas.contentShape(Rectangle()).onTapGesture { focusedInput = nil })
             .scrollDismissesKeyboard(.interactively)
             .tint(PageStyle.ink)
             .id(selectedDate)
@@ -1046,6 +1094,16 @@ struct WorkoutsTabView: View {
                 removal: .move(edge: dayTransitionDirection > 0 ? .leading : .trailing)
             ))
             .clipped()
+            .onChange(of: pendingScrollSetID) { _, setID in
+                guard let setID else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        scrollProxy.scrollTo(setID, anchor: .bottom)
+                    }
+                }
+            }
+            }
 
             HStack(spacing: 22) {
                 NavigationLink("История", destination: WorkoutHistoryView())
@@ -1069,7 +1127,7 @@ struct WorkoutsTabView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 58)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ThemePalette.onAccent)
                     .background(PageStyle.ink, in: Capsule())
             }
             .buttonStyle(PressableCardStyle())
@@ -1121,80 +1179,128 @@ struct WorkoutsTabView: View {
     private var calendarCard: some View {
         VStack(spacing: 14) {
             HStack {
-                Button { moveWeek(-1) } label: {
+                Button { moveMonth(-1) } label: {
                     Image(systemName: "chevron.left")
                         .frame(width: 40, height: 40)
                 }
                 Spacer()
-                Text(weekStart.formatted(.dateTime.month(.wide).year()))
+                Text(selectedDate.formatted(.dateTime.month(.wide).year()))
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Button { moveWeek(1) } label: {
+                Button { moveMonth(1) } label: {
                     Image(systemName: "chevron.right")
                         .frame(width: 40, height: 40)
                 }
             }
             .font(.system(size: 14, weight: .medium))
 
-            HStack(spacing: 0) {
-                ForEach(0..<7, id: \.self) { offset in
-                    if let day = calendar.date(byAdding: .day, value: offset, to: weekStart) {
-                        Button {
-                            selectDate(day)
-                        } label: {
-                            VStack(spacing: 8) {
-                                Text(day.formatted(.dateTime.weekday(.abbreviated)))
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(PageStyle.muted)
-                                Text(day.formatted(.dateTime.day()))
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(calendar.isDate(day, inSameDayAs: selectedDate) ? .white : PageStyle.ink)
-                                    .frame(width: 38, height: 38)
-                                    .background(calendar.isDate(day, inSameDayAs: selectedDate) ? PageStyle.ink : .clear, in: Circle())
+            GeometryReader { geometry in
+                Color.clear
+                    .overlay(alignment: .leading) {
+                        HStack(spacing: 0) {
+                            ForEach(-1...1, id: \.self) { weekOffset in
+                                if let start = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: weekStart) {
+                                    weekDays(starting: start)
+                                        .frame(width: geometry.size.width)
+                                }
                             }
-                            .frame(maxWidth: .infinity)
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+                        .frame(width: geometry.size.width * 3, height: geometry.size.height)
+                        .offset(x: -geometry.size.width + weekDragOffset)
                     }
-                }
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+                .contentShape(Rectangle())
+                .clipped()
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 5)
+                        .onChanged { value in
+                            guard !isWeekSettling, abs(value.translation.width) > abs(value.translation.height) else { return }
+                            var transaction = Transaction(animation: nil)
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                weekDragOffset = min(max(value.translation.width, -geometry.size.width), geometry.size.width)
+                            }
+                        }
+                        .onEnded { value in
+                            guard !isWeekSettling else { return }
+                            let horizontal = value.translation.width
+                            let direction = abs(horizontal) > abs(value.translation.height) && abs(horizontal) > geometry.size.width * 0.25 ? (horizontal < 0 ? 1 : -1) : 0
+                            isWeekSettling = true
+                            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.88), completionCriteria: .removed) {
+                                weekDragOffset = CGFloat(-direction) * geometry.size.width
+                            } completion: {
+                                var transaction = Transaction(animation: nil)
+                                transaction.disablesAnimations = true
+                                withTransaction(transaction) {
+                                    if direction != 0, let day = calendar.date(byAdding: .weekOfYear, value: direction, to: selectedDate) {
+                                        selectDate(day, animated: false)
+                                    }
+                                    weekDragOffset = 0
+                                    isWeekSettling = false
+                                }
+                            }
+                        }
+                )
             }
+            .frame(height: 58)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 14)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22))
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 22))
     }
 
-    private func moveWeek(_ offset: Int) {
-        guard let currentWeek = calendar.dateInterval(of: .weekOfYear, for: selectedDate) else { return }
-        if offset < 0 {
-            guard let previousSunday = calendar.date(byAdding: .day, value: -1, to: currentWeek.start) else { return }
-            selectDate(previousSunday)
-        } else {
-            selectDate(currentWeek.end)
+    private func weekDays(starting start: Date) -> some View {
+        HStack(spacing: 0) {
+            ForEach(0..<7, id: \.self) { offset in
+                if let day = calendar.date(byAdding: .day, value: offset, to: start) {
+                    Button { selectDate(day) } label: {
+                        VStack(spacing: 8) {
+                            Text(day.formatted(.dateTime.weekday(.abbreviated)))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(PageStyle.muted)
+                            Text(day.formatted(.dateTime.day()))
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(calendar.isDate(day, inSameDayAs: selectedDate) ? ThemePalette.onAccent : PageStyle.ink)
+                                .frame(width: 38, height: 38)
+                                .background(calendar.isDate(day, inSameDayAs: selectedDate) ? PageStyle.ink : .clear, in: Circle())
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+                }
+            }
         }
     }
 
-    private var daySwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 25)
-            .onEnded { value in
-                let horizontal = value.translation.width
-                guard abs(horizontal) > 65,
-                      abs(horizontal) > abs(value.translation.height) * 1.5,
-                      let date = calendar.date(byAdding: .day, value: horizontal < 0 ? 1 : -1, to: selectedDate) else { return }
-                selectDate(date)
-            }
+    private func moveMonth(_ offset: Int) {
+        guard let monthStart = calendar.dateInterval(of: .month, for: selectedDate)?.start,
+              let targetMonth = calendar.date(byAdding: .month, value: offset, to: monthStart),
+              let validDays = calendar.range(of: .day, in: .month, for: targetMonth),
+              let day = calendar.date(byAdding: .day, value: min(calendar.component(.day, from: selectedDate), validDays.count) - 1, to: targetMonth) else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            weekDragOffset = 0
+            selectDate(day, animated: false)
+        }
     }
 
-    private func selectDate(_ date: Date) {
+    private func selectDate(_ date: Date, animated: Bool = true) {
         let day = calendar.startOfDay(for: date)
         guard day != selectedDate else { return }
         focusedInput = nil
         dayTransitionDirection = day > selectedDate ? 1 : -1
-        withAnimation(.easeInOut(duration: 0.2)) {
+        let update = {
             selectedDate = day
             expandedExerciseID = nil
+            pendingScrollSetID = nil
+        }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.2), update)
+        } else {
+            update()
         }
     }
 
@@ -1220,6 +1326,16 @@ struct WorkoutsTabView: View {
         case .cardio: value = cardioResultText(set)
         }
         return "Прошлый \(previous.splitTemplateName ?? previous.title) · \(value)"
+    }
+
+    private func exerciseCardBackground(top: Bool, bottom: Bool) -> some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: top ? 21 : 0,
+            bottomLeadingRadius: bottom ? 21 : 0,
+            bottomTrailingRadius: bottom ? 21 : 0,
+            topTrailingRadius: top ? 21 : 0
+        )
+        .fill(ThemePalette.surface)
     }
 
     private func exerciseSummary(_ exercise: WorkoutExercise) -> String {
@@ -1261,8 +1377,10 @@ struct WorkoutsTabView: View {
     private func appendSet(to exercise: WorkoutExercise, in workout: WorkoutRecord) {
         guard var current = store.records.first(where: { $0.id == workout.id }),
               let index = current.exercises.firstIndex(where: { $0.id == exercise.id }) else { return }
-        current.exercises[index].sets.append(SetEntry())
+        let newSet = SetEntry()
+        current.exercises[index].sets.append(newSet)
         store.upsert(current)
+        pendingScrollSetID = newSet.id
     }
 
     private func removeSet(_ set: SetEntry, from exercise: WorkoutExercise, in workout: WorkoutRecord) {
@@ -1282,187 +1400,228 @@ struct WorkoutsTabView: View {
 
 }
 
-private enum InsightAnalysisDepth: String, CaseIterable, Identifiable {
-    case basic, balanced, detailed
+private enum InsightEvidenceSelection: Identifiable {
+    case insight(PersonalInsight, MuscleAnalysisSnapshot)
+    case recommendation(TrainingRecommendation)
 
-    var id: String { rawValue }
-    var title: String {
+    var id: String {
         switch self {
-        case .basic: "Базовая"
-        case .balanced: "Сбалансированная"
-        case .detailed: "Подробная"
-        }
-    }
-    var explanation: String {
-        switch self {
-        case .basic: "Рекорды, регулярность и основные изменения результатов"
-        case .balanced: "Прогресс, мышечная структура и до 3 инсайтов"
-        case .detailed: "До 5 инсайтов, подробная структура и рекомендации"
+        case .insight(let insight, _): "insight-\(insight.id)"
+        case .recommendation(let recommendation): "recommendation-\(recommendation.id)"
         }
     }
 }
 
 struct InsightsView: View {
     @EnvironmentObject private var store: WorkoutStore
-    @AppStorage("insights.analysisDepth") private var analysisDepth: InsightAnalysisDepth = .balanced
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var period: StatsPeriod = .month
-    @State private var selectedRecommendation: TrainingRecommendation?
+    @State private var selectedEvidence: InsightEvidenceSelection?
 
     private var analysis: MuscleAnalysisSnapshot {
         MuscleAnalysisEngine.analyze(store: store, period: period)
     }
 
-    private var report: PersonalInsightsResult {
-        InsightsEngine.personalInsights(from: analysis)
-    }
-
-    private var recommendations: [TrainingRecommendation] {
-        RecommendationEngine.recommendations(analysis: analysis, insights: report)
-    }
-
-    private var displayedInsights: [PersonalInsight] {
-        let insights = report.insights.filter { insight in
-            analysisDepth != .basic || insight.category == .achievement || insight.category == .regularity
-                || (insight.category == .progress && !insight.id.hasPrefix("stable-"))
-        }
-        return Array(insights.prefix(analysisDepth == .detailed ? 5 : 3))
-    }
-
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Инсайты")
-                    .font(.system(size: 30, weight: .bold))
-                Picker("Период анализа", selection: $period) {
-                    ForEach(StatsPeriod.allCases) { option in
-                        Text(option.rawValue).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(periodLabel(analysis.period))
-                    .font(.system(size: 13))
-                    .foregroundStyle(PageStyle.muted)
-
-                if report.readiness == .collecting {
-                    stateCard("Собираем историю тренировок",
-                              "Первые наблюдения появятся после семи дней истории и нескольких тренировок с записанными результатами.")
-                } else if displayedInsights.isEmpty {
-                    stateCard("Пока недостаточно данных",
-                              "Для персональных наблюдений нужны выполненные подходы и сопоставимые записи. Продолжай записывать тренировки.")
-                } else {
-                    ForEach(Array(displayedInsights.enumerated()), id: \.element.id) { index, insight in
-                        insightCard(insight, featured: index == 0)
-                    }
-                }
-
-                if analysisDepth == .detailed && !recommendations.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("НА ЧТО ОБРАТИТЬ ВНИМАНИЕ")
-                            .font(.system(size: 12, weight: .semibold))
-                            .tracking(1)
-                            .foregroundStyle(PageStyle.muted)
-                        ForEach(recommendations) { recommendation in
-                            Button {
-                                selectedRecommendation = recommendation
-                            } label: {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack {
-                                        Text(recommendation.title)
-                                            .font(.system(size: 15, weight: .semibold))
-                                        Spacer(minLength: 8)
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 11, weight: .semibold))
-                                    }
-                                    Text(recommendation.explanation)
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(PageStyle.muted)
-                                        .multilineTextAlignment(.leading)
-                                }
-                                .foregroundStyle(PageStyle.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(15)
-                                .background(.white, in: RoundedRectangle(cornerRadius: 16))
-                            }
-                            .buttonStyle(.plain)
+        let snapshot = analysis
+        let report = InsightsEngine.personalInsights(from: snapshot)
+        let progressInsight = report.insights.first { $0.category == .progress || $0.category == .achievement }
+        let visibleInsights = report.insights.filter { $0.id == report.insights.first?.id || $0.id == progressInsight?.id }
+        let recommendations = RecommendationEngine.recommendations(
+            analysis: snapshot,
+            insights: PersonalInsightsResult(readiness: report.readiness,
+                                             observationCount: report.observationCount,
+                                             insights: visibleInsights))
+        let hasInsight = report.readiness != .collecting && report.readiness != .insufficientData && !report.insights.isEmpty
+        let hasAnalysis = report.readiness == .preliminary || report.readiness == .detailed
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Период анализа", selection: $period) {
+                        ForEach(StatsPeriod.allCases) { option in
+                            Text(option.rawValue).tag(option)
                         }
                     }
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("ПОДРОБНЫЙ АНАЛИЗ")
-                        .font(.system(size: 12, weight: .semibold))
-                        .tracking(1)
+                    .pickerStyle(.segmented)
+                    Text(periodLabel(snapshot.period))
+                        .font(.subheadline)
                         .foregroundStyle(PageStyle.muted)
-                    if analysisDepth != .basic {
-                        NavigationLink {
-                            MuscleStructureView(period: period, showsAccents: analysisDepth == .detailed)
-                        } label: {
-                            detailRow("Мышечная структура")
-                        }
+                }
+
+                heroCard(snapshot: snapshot, featured: hasInsight ? report.insights.first : nil)
+
+                Text("Анализ тренировок")
+                    .font(.headline)
+
+                VStack(spacing: 8) {
+                    NavigationLink {
+                        MuscleStructureView(period: period)
+                    } label: {
+                        detailCard(title: "Мышечная структура", symbol: "figure.strengthtraining.traditional",
+                                   subtitle: muscleSubtitle(snapshot: snapshot, hasAnalysis: hasAnalysis))
                     }
+                    .buttonStyle(.plain)
                     NavigationLink {
                         ExerciseAnalysisView(period: period)
                     } label: {
-                        detailRow("Прогресс")
+                        detailCard(title: "Прогресс", symbol: "chart.line.uptrend.xyaxis",
+                                   subtitle: hasAnalysis ? "Динамика результатов упражнений"
+                                       : "Динамика результатов")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if !recommendations.isEmpty {
+                    Text("На что обратить внимание")
+                        .font(.title3.weight(.semibold))
+                        .padding(.top, 4)
+                    ForEach(recommendations) { recommendation in
+                        Button {
+                            selectedEvidence = .recommendation(recommendation)
+                        } label: {
+                            detailCard(title: recommendation.title, symbol: "lightbulb",
+                                       subtitle: recommendation.explanation)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 20)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
         }
         .floatingTabBarClearance()
         .background(PageStyle.canvas.ignoresSafeArea())
         .foregroundStyle(PageStyle.ink)
         .navigationTitle("Инсайты")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $selectedRecommendation) { recommendation in
-            RecommendationDetailView(recommendation: recommendation, period: period)
+        .sheet(item: $selectedEvidence) { selection in
+            switch selection {
+            case .insight(let insight, let snapshot):
+                RecommendationDetailView(insight: insight, analysis: snapshot, period: period)
+            case .recommendation(let recommendation):
+                RecommendationDetailView(recommendation: recommendation, period: period)
+            }
         }
     }
 
-    private func insightCard(_ insight: PersonalInsight, featured: Bool) -> some View {
-        VStack(alignment: .leading, spacing: featured ? 10 : 6) {
-            Text(insight.category.label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.8)
+    private func heroCard(snapshot: MuscleAnalysisSnapshot, featured: PersonalInsight?) -> some View {
+        let metricsLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(featured?.title ?? (snapshot.readiness == .preliminary || snapshot.readiness == .detailed
+                    ? "Пока нет подтверждённых наблюдений" : snapshot.readiness == .insufficientData
+                    ? "Нужно больше тренировочных дней" : "Собираем историю тренировок"))
+                    .font(.title3.weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let featured {
+                    Button("Подробнее") {
+                        selectedEvidence = .insight(featured, snapshot)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(PageStyle.muted)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(ThemePalette.soft, in: Capsule())
+                } else if !dynamicTypeSize.isAccessibilitySize {
+                    Text(readinessTitle(snapshot.readiness))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(PageStyle.muted)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(ThemePalette.soft, in: Capsule())
+                }
+            }
+            Text(featured?.explanation ?? (snapshot.readiness == .preliminary || snapshot.readiness == .detailed
+                ? "Для персональных выводов пока не хватает сопоставимых результатов."
+                : snapshot.readiness == .insufficientData
+                ? "История уже достаточна по времени, но в выбранном периоде нужны результаты минимум за два тренировочных дня."
+                : snapshot.observationCount == 0 && snapshot.historyAgeDays == 0
+                ? "Запишите первую тренировку с результатами, чтобы начать собирать историю."
+                : "Первые наблюдения доступны после семи календарных дней истории и тренировок в разные дни."))
+                .font(.footnote)
                 .foregroundStyle(PageStyle.muted)
-            Text(insight.title)
-                .font(.system(size: featured ? 22 : 17, weight: .semibold))
-            Text(insight.explanation)
-                .font(.system(size: 14))
-            if let evidence = insight.metrics.first {
-                Text("\(evidence.name): \(evidence.value.formatted(.number.precision(.fractionLength(0...1)))) \(evidence.unit)")
-                    .font(.system(size: 12))
+                .fixedSize(horizontal: false, vertical: true)
+
+            metricsLayout {
+                metricCard(value: "\(snapshot.regularity.workoutCount)", title: "Тренировки", symbol: "dumbbell")
+                metricCard(value: snapshot.historyAgeDays == 0 && snapshot.observationCount == 0 ? "—" : "\(snapshot.historyAgeDays)", title: "Дней с первой записи", symbol: "calendar")
+                metricCard(value: "\(snapshot.regularity.activeWeekCount)", title: "Активные недели", symbol: "chart.bar")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 27))
+        .shadow(color: .black.opacity(0.055), radius: 19, y: 8)
+        .shadow(color: .black.opacity(0.025), radius: 3, y: 1)
+    }
+
+    private func readinessTitle(_ readiness: MuscleAnalysisReadiness) -> String {
+        switch readiness {
+        case .collecting: "Сбор истории"
+        case .insufficientData: "Мало записей"
+        case .preliminary: "Предварительно"
+        case .detailed: "Подробно"
+        }
+    }
+
+    private func metricCard(value: String, title: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.title3.weight(.semibold))
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(PageStyle.muted)
             }
-            Text(periodLabel(insight.period))
-                .font(.system(size: 12))
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 53, alignment: .topLeading)
+        .padding(8)
+        .background(ThemePalette.raised, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.035), radius: 7, y: 3)
+    }
+
+    private func detailCard(title: String, symbol: String, subtitle: String) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .regular))
+                .frame(width: 46, height: 46)
+                .background(ThemePalette.soft, in: RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PageStyle.ink)
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(PageStyle.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(PageStyle.muted)
         }
+        .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(featured ? 20 : 16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.05), radius: 13, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: 20))
     }
 
-    private func stateCard(_ title: String, _ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 18, weight: .semibold))
-            Text(message).font(.system(size: 14)).foregroundStyle(PageStyle.muted)
+    private func muscleSubtitle(snapshot: MuscleAnalysisSnapshot, hasAnalysis: Bool) -> String {
+        guard hasAnalysis else { return "Группы мышц и подходы" }
+        let groups = snapshot.groups.filter { $0.directSets > 0 }
+        guard let leading = groups.max(by: { $0.directSets < $1.directSets }) else {
+            return "Пока нет записанных силовых подходов за период"
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private func detailRow(_ title: String) -> some View {
-        HStack {
-            Text(title).font(.system(size: 16, weight: .medium))
-            Spacer()
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
-        }
-        .foregroundStyle(PageStyle.ink)
-        .padding(16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+        return "Больше всего прямых подходов: \(leading.target.category.rawValue) — \(leading.directSets)"
     }
 
     private func periodLabel(_ interval: DateInterval) -> String {
@@ -1472,36 +1631,67 @@ struct InsightsView: View {
 
 private struct RecommendationDetailView: View {
     @Environment(\.dismiss) private var dismiss
-    let recommendation: TrainingRecommendation
+    private let recommendation: TrainingRecommendation?
+    private let insight: PersonalInsight?
+    private let analysis: MuscleAnalysisSnapshot?
+    private let basePeriod: DateInterval
     let period: StatsPeriod
+
+    init(recommendation: TrainingRecommendation, period: StatsPeriod) {
+        self.recommendation = recommendation
+        self.insight = nil
+        self.analysis = nil
+        self.basePeriod = recommendation.period
+        self.period = period
+    }
+
+    init(insight: PersonalInsight, analysis: MuscleAnalysisSnapshot, period: StatsPeriod) {
+        self.recommendation = nil
+        self.insight = insight
+        self.analysis = analysis
+        self.basePeriod = insight.period
+        self.period = period
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(recommendation.category.label.uppercased())
+                    Text((recommendation?.category.label ?? insight?.category.label ?? "").uppercased())
                         .font(.system(size: 11, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(PageStyle.muted)
-                    Text(recommendation.title)
-                        .font(.system(size: 21, weight: .semibold))
-                    Text(recommendation.explanation)
-                        .font(.system(size: 14))
-                    Text("Основание · \(recommendation.period.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(recommendation.period).formatted(date: .abbreviated, time: .omitted))")
-                        .font(.system(size: 12))
-                        .foregroundStyle(PageStyle.muted)
-                    Text("Наблюдений: \(recommendation.observationCount)")
-                        .font(.system(size: 13))
-                    ForEach(Array(recommendation.metrics.enumerated()), id: \.offset) { _, evidence in
+                    if let recommendation {
+                        Text(recommendation.title)
+                            .font(.system(size: 21, weight: .semibold))
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let previous = previousPeriod {
+                            Text("Предыдущий период: \(periodLabel(previous))")
+                        }
+                        Text("\(previousPeriod == nil ? "Период" : "Текущий период"): \(periodLabel(evidencePeriod))")
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(PageStyle.muted)
+                    if let recommendation {
+                        Text("\(observationLabel): \(recommendation.observationCount)")
+                            .font(.system(size: 13))
+                    }
+                    ForEach(Array(metrics.enumerated()), id: \.offset) { _, evidence in
                         HStack {
-                            Text(evidence.name)
+                            Text(readableMetricName(evidence.name))
                             Spacer()
                             Text("\(evidence.value.formatted(.number.precision(.fractionLength(0...1)))) \(evidence.unit)")
                                 .fontWeight(.medium)
                         }
                         .font(.system(size: 13))
                     }
-                    if let action = recommendation.action {
+                    if metrics.contains(where: { $0.unit == "кг" }) {
+                        Text("Оценка силы на основе веса и повторений")
+                            .font(.system(size: 12))
+                            .foregroundStyle(PageStyle.muted)
+                    }
+                    if let action = recommendation?.action {
                         NavigationLink {
                             switch action {
                             case .muscleStructure(let category):
@@ -1530,11 +1720,60 @@ private struct RecommendationDetailView: View {
             }
             .background(PageStyle.canvas.ignoresSafeArea())
             .foregroundStyle(PageStyle.ink)
-            .navigationTitle("Основание")
+            .navigationTitle("Почему такой вывод")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var metrics: [PersonalInsightMetric] {
+        recommendation?.metrics ?? insight?.metrics ?? []
+    }
+
+    private var comparesPeriods: Bool {
+        insight != nil && metrics.contains {
+            ["В прошлом периоде", "Доля ранее", "Изменение в прошлом периоде"].contains($0.name)
+        }
+    }
+
+    private var evidencePeriod: DateInterval {
+        if comparesPeriods, let analysis { return analysis.period }
+        return basePeriod
+    }
+
+    private var previousPeriod: DateInterval? {
+        if comparesPeriods { return analysis?.previousPeriod }
+        return recommendation?.previousPeriod
+    }
+
+    private var observationLabel: String {
+        switch recommendation?.category {
+        case .muscleAccents: "Подходов с участием группы"
+        case .exerciseProgress: "Выполнений для тенденции"
+        case .trainingDistribution: "Прямых подходов в сравнении"
+        case .regularity: "Тренировок в сравнении"
+        case nil: "Наблюдений"
+        }
+    }
+
+    private func periodLabel(_ interval: DateInterval) -> String {
+        "\(interval.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(interval).formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    private func readableMetricName(_ name: String) -> String {
+        switch name {
+        case "Акценты с записанной работой": "Задействованные акценты"
+        case "Прямые подходы": "Подходы с основным акцентом"
+        case "Косвенные подходы": "Подходы с дополнительным участием"
+        case "Всего сопоставимых выполнений": "Всего выполнений для сравнения"
+        case "Доля сейчас": "Доля за этот период"
+        case "Доля ранее": "Доля за прошлый период"
+        case "Прямые подходы сейчас": "Основные подходы за период"
+        case "В прошлом периоде": "За прошлый период"
+        case "Тренировки сейчас": "Тренировки за период"
+        default: name
+        }
     }
 }
 
@@ -1617,7 +1856,7 @@ private struct MuscleStructureView: View {
         .foregroundStyle(PageStyle.ink)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -1649,7 +1888,7 @@ private struct MuscleAccentView: View {
                         .font(.system(size: 13))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
             }
@@ -1670,25 +1909,21 @@ private struct ExerciseAnalysisView: View {
         MuscleAnalysisEngine.analyze(store: store, period: period)
     }
 
-    private var comparable: [ExerciseProgressResult] {
-        analysis.exercises.filter(\.canCompare)
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(period.rawValue) · результаты одного упражнения сравниваются только с его историей")
                     .font(.system(size: 13)).foregroundStyle(PageStyle.muted)
-                if comparable.isEmpty {
-                    Text("Пока нет сопоставимых результатов. Нужны повторные выполнения одного упражнения.")
+                if analysis.exercises.isEmpty {
+                    Text("Для анализа динамики нужно больше сопоставимых тренировок.")
                         .font(.system(size: 14)).foregroundStyle(PageStyle.muted)
                         .padding(18)
                 } else {
-                    ForEach(comparable) { result in
+                    ForEach(analysis.exercises) { result in
                         NavigationLink {
                             ExerciseHistoryChartView(exerciseID: result.exerciseID, selectedDate: .now)
                         } label: {
-                            VStack(alignment: .leading, spacing: 7) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 HStack {
                                     Text(result.name).font(.system(size: 17, weight: .semibold))
                                     Spacer()
@@ -1697,15 +1932,33 @@ private struct ExerciseAnalysisView: View {
                                 }
                                 Text("\(result.metric.label) · \(result.observationCount) наблюдений")
                                     .foregroundStyle(PageStyle.muted)
-                                if let latest = result.latest, let previous = result.previous {
-                                    Text("\(previous.formatted(.number.precision(.fractionLength(0...1)))) → \(latest.formatted(.number.precision(.fractionLength(0...1)))) \(result.metric.unit)")
+                                Text(trendTitle(result.trend, metric: result.metric))
+                                    .font(.system(size: 14, weight: .semibold))
+                                if result.canInferTrend {
+                                    Chart {
+                                        ForEach(result.recentValues.indices, id: \.self) { index in
+                                            LineMark(x: .value("Выполнение", index + 1),
+                                                     y: .value(result.metric.label, result.recentValues[index]))
+                                                .foregroundStyle(PageStyle.ink)
+                                            PointMark(x: .value("Выполнение", index + 1),
+                                                      y: .value(result.metric.label, result.recentValues[index]))
+                                                .foregroundStyle(PageStyle.ink)
+                                        }
+                                    }
+                                    .chartXAxis(.hidden)
+                                    .chartYAxis(.hidden)
+                                    .frame(height: 42)
+                                    .accessibilityHidden(true)
                                 }
+                                Text(trendExplanation(result))
+                                    .foregroundStyle(PageStyle.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .font(.system(size: 13))
                             .foregroundStyle(PageStyle.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
-                            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                            .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
                         }
                     }
                 }
@@ -1717,12 +1970,37 @@ private struct ExerciseAnalysisView: View {
         .navigationTitle("Прогресс")
         .navigationBarTitleDisplayMode(.inline)
     }
+
+    private func trendTitle(_ trend: ExerciseResultTrend, metric: ExerciseResultMetric) -> String {
+        switch trend {
+        case .improvement: "Положительная динамика"
+        case .stable: "Стабильная динамика"
+        case .decline: "Результаты снизились"
+        case .changed: metric == .cardioDurationSeconds || metric == .cardioDistanceKilometers
+            ? "Изменение результата" : "Неоднозначная динамика"
+        case .insufficientData: "Тенденция пока не определена"
+        }
+    }
+
+    private func trendExplanation(_ result: ExerciseProgressResult) -> String {
+        switch result.trend {
+        case .improvement: "За последние пять сопоставимых выполнений результат в целом вырос."
+        case .stable: result.hasIdenticalRecentResults
+            ? "Пять последних сопоставимых результатов совпадают."
+            : "Пять последних сопоставимых результатов близки, с небольшими колебаниями."
+        case .decline: "За последние пять сопоставимых выполнений результат в целом снизился; причина неизвестна."
+        case .changed: result.metric == .cardioDurationSeconds || result.metric == .cardioDistanceKilometers
+            ? "Длительность и дистанция описывают занятия, но сами по себе не показывают улучшение формы."
+            : "Результаты колебались без устойчивого направления."
+        case .insufficientData: "Для анализа динамики нужно не менее пяти сопоставимых выполнений."
+        }
+    }
 }
 
 private extension ExerciseResultMetric {
     var label: String {
         switch self {
-        case .estimatedOneRepMax: "Расчётный силовой результат"
+        case .estimatedOneRepMax: "Оценка силы"
         case .repetitions: "Повторения"
         case .durationSeconds, .cardioDurationSeconds: "Длительность"
         case .cardioDistanceKilometers: "Дистанция"
@@ -1730,7 +2008,7 @@ private extension ExerciseResultMetric {
     }
     var unit: String {
         switch self {
-        case .estimatedOneRepMax: "кг e1RM"
+        case .estimatedOneRepMax: "кг"
         case .repetitions: "повт."
         case .durationSeconds, .cardioDurationSeconds: "сек."
         case .cardioDistanceKilometers: "км"
@@ -1739,7 +2017,10 @@ private extension ExerciseResultMetric {
 }
 struct SettingsView: View {
     @EnvironmentObject private var store: WorkoutStore
-    @AppStorage("insights.analysisDepth") private var analysisDepth: InsightAnalysisDepth = .balanced
+    @AppStorage("appAppearance") private var appearance = AppAppearance.system.rawValue
+    #if DEBUG
+    @AppStorage("debugDemoMode") private var debugDemoMode = false
+    #endif
 
     var body: some View {
         Form {
@@ -1757,16 +2038,33 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section("Инсайты") {
-                Picker("Глубина анализа", selection: $analysisDepth) {
-                    ForEach(InsightAnalysisDepth.allCases) { depth in
-                        Text(depth.title).tag(depth)
+            Section("Внешний вид") {
+                HStack(spacing: 2) {
+                    ForEach(AppAppearance.allCases) { option in
+                        Button {
+                            appearance = option.rawValue
+                        } label: {
+                            Text(option.title)
+                                .font(.system(size: 13, weight: appearance == option.rawValue ? .semibold : .regular))
+                                .foregroundStyle(appearance == option.rawValue ? PageStyle.ink : PageStyle.muted)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 34)
+                                .background(appearance == option.rawValue ? ThemePalette.surface : .clear, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(appearance == option.rawValue ? .isSelected : [])
                     }
                 }
-                Text(analysisDepth.explanation)
-                    .font(.footnote)
-                    .foregroundStyle(PageStyle.muted)
+                .padding(3)
+                .background(ThemePalette.soft, in: Capsule())
             }
+            #if DEBUG
+            Section {
+                Toggle("Демонстрационная история", isOn: $debugDemoMode)
+            } footer: {
+                Text("Только DEBUG. Данные хранятся отдельно в памяти и не меняют ваши тренировки.")
+            }
+            #endif
             if let error = store.saveError {
                 Section { Text(error).foregroundStyle(.red) }
             }

@@ -161,6 +161,7 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
             "Сгибание запястий со штангой": "forearms_wrist_curl_barbell",
             "Разгибание запястий со штангой": "forearms_wrist_extension_barbell",
             "Обратные сгибания со штангой": "forearms_reverse_barbell_curl",
+            "Обратные сгибания рук в кроссовере": "forearms_reverse_cable_curl",
             "Бег": "cardio_run",
             "Ходьба": "cardio_walk",
             "Велотренажёр": "cardio_stationary_bike",
@@ -190,6 +191,7 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
             "Сгибание запястий со штангой": "Сгибатели предплечья",
             "Разгибание запястий со штангой": "Разгибатели предплечья",
             "Обратные сгибания со штангой": "Плечелучевая",
+            "Обратные сгибания рук в кроссовере": "Плечелучевая",
             "Скручивания": "Прямая мышца живота", "Подъём ног": "Прямая мышца живота",
             "Подъём ног в висе": "Прямая мышца живота", "Планка": "Кор"
         ]
@@ -198,20 +200,24 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
             "Жим гантелей лёжа": [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Передняя дельта")],
             "Жим гантелей на наклонной скамье": [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Передняя дельта")],
             "Отжимания на брусьях": [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Передняя дельта")],
-            "Подтягивания": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
-            "Подтягивания с весом": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
-            "Тяга верхнего блока": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
-            "Тяга гантели одной рукой": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
-            "Тяга горизонтального блока": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
-            "Тяга штанги к поясу": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.forearms, "Сгибатели предплечья")],
+            "Подтягивания": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
+            "Подтягивания с весом": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
+            "Тяга верхнего блока": [MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
+            "Тяга гантели одной рукой": [MuscleTarget(.back, "Средняя часть спины"), MuscleTarget(.shoulders, "Задняя дельта"), MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
+            "Тяга горизонтального блока": [MuscleTarget(.back, "Широчайшие"), MuscleTarget(.shoulders, "Задняя дельта"), MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
+            "Тяга штанги к поясу": [MuscleTarget(.back, "Широчайшие"), MuscleTarget(.shoulders, "Задняя дельта"), MuscleTarget(.biceps, "Бицепс"), MuscleTarget(.biceps, "Брахиалис")],
             "Приседания со штангой": [MuscleTarget(.legs, "Ягодичные")],
             "Жим ногами": [MuscleTarget(.legs, "Ягодичные")],
             "Румынская тяга": [MuscleTarget(.legs, "Ягодичные")],
             "Жим гантелей сидя": [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Средняя дельта")],
             "Жим штанги стоя": [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Средняя дельта")],
             "Тяга штанги к подбородку": [MuscleTarget(.back, "Трапеции")],
+            "Разведение гантелей в наклоне": [MuscleTarget(.back, "Средняя часть спины")],
+            "Подъём штанги на бицепс": [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.forearms, "Плечелучевая")],
+            "Подъём гантелей на бицепс": [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.forearms, "Плечелучевая")],
             "Молотковые сгибания": [MuscleTarget(.forearms, "Плечелучевая")],
-            "Обратные сгибания со штангой": [MuscleTarget(.biceps, "Брахиалис")]
+            "Обратные сгибания со штангой": [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.biceps, "Бицепс")],
+            "Обратные сгибания рук в кроссовере": [MuscleTarget(.biceps, "Брахиалис"), MuscleTarget(.biceps, "Бицепс")]
         ]
         let original: [ExerciseDefinition] = groups.flatMap { category, names in names.map { (category, $0) } }.enumerated().compactMap { index, item -> ExerciseDefinition? in
             guard let id = UUID(uuidString: String(format: "00000000-0000-4000-8000-%012X", index + 1)) else { return nil }
@@ -234,7 +240,9 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
             guard let id = UUID(uuidString: String(format: "00000000-0000-4000-8000-%012X", index + 0x2A)) else { return nil }
             return ExerciseDefinition(id: id, name: name, category: .forearms, isCustom: false, illustrationID: illustrations[name], trackingType: .weightReps, muscleAccent: accents[name], secondaryMuscles: secondaries[name] ?? [])
         }
-        return original + [ExerciseDefinition(id: frontRaiseID, name: "Подъём гантелей перед собой", category: .shoulders, isCustom: false, illustrationID: illustrations["Подъём гантелей перед собой"], trackingType: .weightReps, muscleAccent: accents["Подъём гантелей перед собой"])] + cardioExercises + shrugs + [ExerciseDefinition(id: uprightRowID, name: "Тяга штанги к подбородку", category: .shoulders, isCustom: false, illustrationID: illustrations["Тяга штанги к подбородку"], trackingType: .weightReps, muscleAccent: accents["Тяга штанги к подбородку"], secondaryMuscles: secondaries["Тяга штанги к подбородку"] ?? [])] + forearmExercises
+        guard let cableReverseCurlID = UUID(uuidString: "00000000-0000-4000-8000-00000000002D") else { return original }
+        let cableReverseCurl = ExerciseDefinition(id: cableReverseCurlID, name: "Обратные сгибания рук в кроссовере", category: .forearms, isCustom: false, illustrationID: illustrations["Обратные сгибания рук в кроссовере"], trackingType: .weightReps, muscleAccent: accents["Обратные сгибания рук в кроссовере"], secondaryMuscles: secondaries["Обратные сгибания рук в кроссовере"] ?? [])
+        return original + [ExerciseDefinition(id: frontRaiseID, name: "Подъём гантелей перед собой", category: .shoulders, isCustom: false, illustrationID: illustrations["Подъём гантелей перед собой"], trackingType: .weightReps, muscleAccent: accents["Подъём гантелей перед собой"])] + cardioExercises + shrugs + [ExerciseDefinition(id: uprightRowID, name: "Тяга штанги к подбородку", category: .shoulders, isCustom: false, illustrationID: illustrations["Тяга штанги к подбородку"], trackingType: .weightReps, muscleAccent: accents["Тяга штанги к подбородку"], secondaryMuscles: secondaries["Тяга штанги к подбородку"] ?? [])] + forearmExercises + [cableReverseCurl]
     }()
 }
 
@@ -361,11 +369,16 @@ final class WorkoutStore: ObservableObject {
     }
 
     private let fileURL: URL
+    private let isEphemeral: Bool
 
-    init(fileURL: URL? = nil) {
+    init(fileURL: URL? = nil, isEphemeral: Bool = false) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        self.fileURL = fileURL ?? support.appendingPathComponent("Zal", isDirectory: true).appendingPathComponent("workouts.json")
-        load()
+        let storageDirectory = isEphemeral
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("ZalDemo", isDirectory: true)
+            : support.appendingPathComponent("Zal", isDirectory: true)
+        self.fileURL = fileURL ?? storageDirectory.appendingPathComponent("workouts.json")
+        self.isEphemeral = isEphemeral
+        if !isEphemeral { load() }
     }
 
     var workouts: [WorkoutRecord] {
@@ -651,6 +664,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     private func save() {
+        guard !isEphemeral else { return }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let savedExercises = exercises.filter { exercise in
