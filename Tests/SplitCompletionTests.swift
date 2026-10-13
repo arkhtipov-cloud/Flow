@@ -86,7 +86,97 @@ struct SplitCompletionTests {
         expect(store.nextSplitTemplate?.id == second.id,
                "Completing a previously skipped draft must not advance the current template")
         testHistoricalMuscleMaps()
+        testExerciseTrends()
+        testInsightWording()
         print("PASS: split completion, continuation, editing and skipping")
+    }
+
+    static func testExerciseTrends() {
+        let trend = MuscleAnalysisEngine.trend
+        expect(trend([100, 102, 104, 106, 108], .estimatedOneRepMax) == .improvement,
+               "Gradual improvement needs five comparable results")
+        expect(trend([100, 104, 102, 106, 109], .estimatedOneRepMax) == .improvement,
+               "A small fluctuation must not hide a sustained rise")
+        expect(trend([100, 101, 99, 100, 101], .estimatedOneRepMax) == .stable,
+               "Small changes around one level are stable")
+        expect(trend([110, 108, 105, 103, 100], .estimatedOneRepMax) == .decline,
+               "A sustained decrease is descriptive, not a fitness diagnosis")
+        expect(trend([100, 102, 104, 106], .estimatedOneRepMax) == .insufficientData,
+               "Four results must not create a confirmed trend")
+        expect(trend([100, 107, 95, 106, 100], .estimatedOneRepMax) == .changed,
+               "Strongly mixed results must remain uncertain")
+        expect(trend([20, 22, 24, 26, 28], .cardioDistanceKilometers) == .changed,
+               "More cardio distance alone must not mean improved fitness")
+    }
+
+    static func testInsightWording() {
+        let end = Date(timeIntervalSince1970: 1_800_000_000)
+        let period = DateInterval(start: end.addingTimeInterval(-12 * 86_400), end: end)
+        let trendPeriod = DateInterval(start: end.addingTimeInterval(-4 * 86_400), end: end)
+        let previous = DateInterval(start: end.addingTimeInterval(-24 * 86_400), end: period.start)
+        let exerciseID = UUID(uuidString: "AAAAAAAA-0000-4000-8000-000000000001")!
+        func snapshot(_ values: [Double], record: Bool = false) -> MuscleAnalysisSnapshot {
+            let exercise = ExerciseProgressResult(
+                exerciseID: exerciseID, name: "Тяга верхнего блока", metric: .estimatedOneRepMax,
+                latest: values.last, previous: values.dropLast().last, observationCount: 10,
+                canCompare: true, canInferTrend: true,
+                trend: MuscleAnalysisEngine.trend(for: values, metric: .estimatedOneRepMax),
+                isPersonalRecord: record, currentPeriodChange: nil, previousPeriodChange: nil,
+                observationPeriod: DateInterval(start: previous.start, end: end),
+                trendPeriod: trendPeriod, recentValues: values)
+            let regularity = MuscleRegularityResult(workoutCount: 5, activeWeekCount: 2,
+                weeklyFrequency: [], previousWorkoutCount: 0, previousActiveWeekCount: 0,
+                observationCount: 5, canComparePeriods: false, consecutiveActiveWeeks: 0,
+                inactiveWeeksBeforeReturn: nil, streakPeriod: nil, returnPeriod: nil)
+            let cardio = MuscleCardioResult(sessionCount: 0, durationSeconds: 0, distanceKilometers: 0,
+                distanceObservationCount: 0, previousSessionCount: 0, previousDurationSeconds: 0,
+                previousDistanceKilometers: 0, previousDistanceObservationCount: 0,
+                observationCount: 0, canComparePeriods: false)
+            return MuscleAnalysisSnapshot(period: period, previousPeriod: previous, readiness: .preliminary,
+                historyAgeDays: 33, observationCount: 5, groups: [], accents: [],
+                exercises: [exercise], regularity: regularity, cardio: cardio)
+        }
+        func recommendation(_ analysis: MuscleAnalysisSnapshot) -> TrainingRecommendation? {
+            RecommendationEngine.recommendations(analysis: analysis,
+                insights: PersonalInsightsResult(readiness: .preliminary, observationCount: 5, insights: [])).first
+        }
+
+        let identical = snapshot([50, 50, 50, 50, 50])
+        let close = snapshot([50, 51, 50, 50, 51])
+        expect(identical.exercises[0].trend == .stable && close.exercises[0].trend == .stable,
+               "Both identical and close values may be stable")
+        expect(recommendation(identical) == nil && recommendation(close) == nil,
+               "Stable results alone must not create a recommendation")
+        let stableInsight = InsightsEngine.personalInsights(from: close).insights.first
+        expect(stableInsight?.explanation.contains("небольшими колебаниями") == true &&
+               stableInsight?.period == trendPeriod,
+               "Stable insight and recommendation must describe the same five results")
+        expect(RecommendationEngine.recommendations(analysis: close,
+            insights: InsightsEngine.personalInsights(from: close)).isEmpty,
+            "Recommendation must not duplicate an already shown insight")
+
+        let rising = snapshot([60, 62, 61, 64, 63])
+        expect(rising.exercises[0].trend == .improvement &&
+               recommendation(rising)?.explanation.contains("в целом вырос") == true &&
+               recommendation(rising)?.observationCount == 5 &&
+               recommendation(rising)?.period == trendPeriod,
+               "An improving but fluctuating series must not be described as monotonic")
+        expect(RecommendationEngine.recommendations(analysis: rising,
+            insights: InsightsEngine.personalInsights(from: rising)).isEmpty,
+            "A visible progress insight must not be repeated as a recommendation")
+        let mixed = snapshot([45, 50, 42, 51, 46])
+        expect(mixed.exercises[0].trend == .changed && recommendation(mixed) == nil &&
+               InsightsEngine.personalInsights(from: mixed).insights.isEmpty,
+               "Ambiguous results must not produce a confirmed progress claim")
+        let falling = snapshot([70, 68, 69, 66, 65])
+        expect(falling.exercises[0].trend == .decline &&
+               InsightsEngine.personalInsights(from: falling).insights.first?.explanation.contains("причина неизвестна") == true,
+               "A decline must be descriptive, not a fitness diagnosis")
+        let record = snapshot([60, 62, 64, 66, 68], record: true)
+        expect(InsightsEngine.personalInsights(from: record).insights.first?.explanation.localizedCaseInsensitiveContains("оценка силы") == true &&
+               recommendation(record) == nil,
+               "Record wording must name the comparable metric and not duplicate a progress recommendation")
+        print("PASS: insight and recommendation wording for identical, close, rising, mixed, falling and record results")
     }
 
     static func testHistoricalMuscleMaps() {

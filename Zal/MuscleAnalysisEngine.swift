@@ -38,6 +38,7 @@ enum ExerciseResultTrend {
     case insufficientData
     case improvement
     case stable
+    case decline
     case changed
 }
 
@@ -55,8 +56,14 @@ struct ExerciseProgressResult: Identifiable {
     let currentPeriodChange: Double?
     let previousPeriodChange: Double?
     let observationPeriod: DateInterval
+    let trendPeriod: DateInterval?
+    let recentValues: [Double]
 
     var id: String { "\(exerciseID.uuidString)-\(metric)" }
+    var hasIdenticalRecentResults: Bool {
+        guard canInferTrend, let first = recentValues.first else { return false }
+        return recentValues.allSatisfy { $0 == first }
+    }
     var change: Double? {
         guard canCompare, let latest, let previous else { return nil }
         return latest - previous
@@ -403,18 +410,9 @@ struct MuscleAnalysisSnapshot {
                 let previous = relevant.dropLast().last?.value
                 let observations = relevant.count
                 let canCompare = observations >= 2
-                let canInferTrend = observations >= 3
-                let trend: ExerciseResultTrend
-                if !canInferTrend { trend = .insufficientData }
-                else {
-                    let last = relevant[observations - 1].value
-                    let prior = relevant[observations - 2].value
-                    let earlier = relevant[observations - 3].value
-                    if last == prior && prior == earlier { trend = .stable }
-                    else if metric != .cardioDurationSeconds && metric != .cardioDistanceKilometers && last > prior && prior > earlier {
-                        trend = .improvement
-                    } else { trend = .changed }
-                }
+                let recentValues = relevant.suffix(5).map(\.value)
+                let canInferTrend = recentValues.count == 5
+                let trend = trend(for: recentValues, metric: metric)
                 let previousBest = relevant.dropLast().map(\.value).max()
                 let isRecord: Bool
                 let recordEligibleDay = firstValidDay.flatMap { calendar.date(byAdding: .day, value: 7, to: $0) }
@@ -428,14 +426,36 @@ struct MuscleAnalysisSnapshot {
                 let priorChange = priorValues.count >= 3 ? priorValues.last! - priorValues.first! : nil
                 let observationPeriod = DateInterval(start: relevant.first!.date,
                     end: Date(timeIntervalSinceReferenceDate: relevant.last!.date.timeIntervalSinceReferenceDate.nextUp))
+                let trendPeriod = canInferTrend ? DateInterval(start: relevant[relevant.count - 5].date,
+                    end: observationPeriod.end) : nil
                 return ExerciseProgressResult(exerciseID: id, name: names[id] ?? "Упражнение", metric: metric,
                                               latest: latest, previous: previous, observationCount: observations,
                                               canCompare: canCompare, canInferTrend: canInferTrend,
                                               trend: trend, isPersonalRecord: isRecord,
                                               currentPeriodChange: currentChange, previousPeriodChange: priorChange,
-                                              observationPeriod: observationPeriod)
+                                              observationPeriod: observationPeriod, trendPeriod: trendPeriod,
+                                              recentValues: recentValues)
             }
         }
+    }
+
+    static func trend(for values: [Double], metric: ExerciseResultMetric) -> ExerciseResultTrend {
+        guard values.count >= 5, values.allSatisfy(\.isFinite) else { return .insufficientData }
+        let recent = Array(values.suffix(5))
+        let sorted = recent.sorted()
+        let tolerance = max(sorted[2] * 0.03, metric == .repetitions ? 1 : metric == .cardioDistanceKilometers ? 0.1 : 0.5)
+        let shift = (recent[3] + recent[4] - recent[0] - recent[1]) / 2
+        let slopes = (0..<4).flatMap { left in
+            ((left + 1)..<5).map { right in (recent[right] - recent[left]) / Double(right - left) }
+        }.sorted()
+        let medianSlope = (slopes[4] + slopes[5]) / 2
+        if abs(shift) <= tolerance && abs(medianSlope * 4) <= tolerance && sorted[4] - sorted[0] <= 2 * tolerance {
+            return .stable
+        }
+        if metric == .cardioDurationSeconds || metric == .cardioDistanceKilometers { return .changed }
+        if shift > tolerance && medianSlope * 4 > tolerance { return .improvement }
+        if shift < -tolerance && medianSlope * 4 < -tolerance { return .decline }
+        return .changed
     }
 
     private static func metrics(for type: ExerciseTrackingType) -> [ExerciseResultMetric] {

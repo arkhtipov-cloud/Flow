@@ -34,34 +34,57 @@ struct PersonalInsightMetric {
             guard let latest = item.latest, let previous = item.previous else { continue }
             let subject = "exercise-\(item.id)"
             let unit: String
+            let resultName: String
+            let increaseVerb: String
+            let decreaseVerb: String
             switch item.metric {
-            case .estimatedOneRepMax: unit = "кг e1RM"
-            case .repetitions: unit = "повт."
-            case .durationSeconds, .cardioDurationSeconds: unit = "сек."
-            case .cardioDistanceKilometers: unit = "км"
+            case .estimatedOneRepMax:
+                unit = "кг"; resultName = "Оценка силы"
+                increaseVerb = "выросла"; decreaseVerb = "снизилась"
+            case .repetitions:
+                unit = "повт."; resultName = "Число повторений"
+                increaseVerb = "выросло"; decreaseVerb = "снизилось"
+            case .durationSeconds, .cardioDurationSeconds:
+                unit = "сек."; resultName = "Длительность"
+                increaseVerb = "увеличилась"; decreaseVerb = "сократилась"
+            case .cardioDistanceKilometers:
+                unit = "км"; resultName = "Дистанция"
+                increaseVerb = "увеличилась"; decreaseVerb = "сократилась"
             }
-            let evidence = [metric("Последний результат", latest, unit),
-                            metric("Предыдущий результат", previous, unit),
-                            metric("Сопоставимые выполнения", Double(item.observationCount))]
+            var evidence = [metric("Последний показатель", latest, unit),
+                            metric("Предыдущий показатель", previous, unit),
+                            metric("Всего сопоставимых выполнений", Double(item.observationCount))]
+            if item.canInferTrend, let first = item.recentValues.first {
+                evidence += [metric("Первый из пяти последних", first, unit),
+                             metric("Выполнений для тенденции", Double(item.recentValues.count))]
+            }
             // Cardio time/distance is descriptive, not a universal measure of performance.
             let isCardio = item.metric == .cardioDurationSeconds || item.metric == .cardioDistanceKilometers
             if item.isPersonalRecord && !isCardio && analysis.historyAgeDays >= 7 {
                 candidates.append(PersonalInsight(id: "pr-\(subject)", category: .achievement,
                     title: "Личный рекорд: \(item.name)",
-                    explanation: "Последний результат выше всех предыдущих выполнений этого упражнения.",
+                    explanation: "\(resultName) — новый максимум среди сопоставимых выполнений.",
                     priority: 100, confidence: confidence(item.observationCount), period: item.observationPeriod,
                     metrics: evidence))
             } else if item.trend == .improvement && !isCardio {
                 candidates.append(PersonalInsight(id: "progress-\(subject)", category: .progress,
-                    title: "Прогресс: \(item.name)",
-                    explanation: "Результат улучшался в нескольких сопоставимых выполнениях.",
-                    priority: 80, confidence: confidence(item.observationCount), period: item.observationPeriod,
+                    title: "Положительная динамика: \(item.name)",
+                    explanation: "За пять последних сопоставимых выполнений \(resultName.lowercased()) в целом \(increaseVerb).",
+                    priority: 80, confidence: confidence(item.recentValues.count), period: item.trendPeriod ?? item.observationPeriod,
                     metrics: evidence))
             } else if item.trend == .stable && !isCardio {
                 candidates.append(PersonalInsight(id: "stable-\(subject)", category: .progress,
                     title: "Стабильный результат: \(item.name)",
-                    explanation: "Последние три сопоставимых выполнения дали одинаковый результат.",
-                    priority: 35, confidence: confidence(item.observationCount), period: item.observationPeriod,
+                    explanation: item.hasIdenticalRecentResults
+                        ? "Пять последних сопоставимых результатов совпадают."
+                        : "Пять последних сопоставимых результатов близки, с небольшими колебаниями.",
+                    priority: 35, confidence: confidence(item.recentValues.count), period: item.trendPeriod ?? item.observationPeriod,
+                    metrics: evidence))
+            } else if item.trend == .decline && !isCardio {
+                candidates.append(PersonalInsight(id: "decline-\(subject)", category: .progress,
+                    title: "Снижение результата: \(item.name)",
+                    explanation: "За пять последних сопоставимых выполнений \(resultName.lowercased()) в целом \(decreaseVerb); причина неизвестна.",
+                    priority: 45, confidence: confidence(item.recentValues.count), period: item.trendPeriod ?? item.observationPeriod,
                     metrics: evidence))
             }
             if analysis.readiness == .detailed, !isCardio,
@@ -88,7 +111,7 @@ struct PersonalInsightMetric {
                     candidates.append(PersonalInsight(id: "distribution-\(group.target.category)",
                         category: .muscleStructure,
                         title: "Изменилась доля: \(group.target.category.rawValue)",
-                        explanation: "Доля прямых подходов этой группы в выбранном периоде \(difference > 0 ? "выросла" : "снизилась") относительно прошлого.",
+                        explanation: "Доля прямых подходов группы «\(group.target.category.rawValue)» \(difference > 0 ? "выросла" : "снизилась") относительно сопоставимого прошлого периода.",
                         priority: 60, confidence: confidence(group.observationCount, comparable: true), period: comparisonInterval,
                         metrics: [metric("Прямые подходы", Double(group.directSets)),
                                   metric("В прошлом периоде", Double(group.previousDirectSets)),
@@ -106,7 +129,7 @@ struct PersonalInsightMetric {
                    group.previousDirectSets == accent.previousDirectSets { continue }
                 candidates.append(PersonalInsight(id: "accent-\(accent.target.category)-\(name)",
                     category: .muscleStructure, title: "\(name): изменение акцента",
-                    explanation: "Прямые подходы на этот акцент \(change > 0 ? "встречались чаще" : "встречались реже"), чем в прошлом периоде.",
+                    explanation: "Прямых подходов на этот акцент: \(accent.directSets) против \(accent.previousDirectSets) в прошлом сопоставимом периоде.",
                     priority: 45, confidence: confidence(accent.observationCount, comparable: true), period: comparisonInterval,
                     metrics: [metric("Прямые подходы", Double(accent.directSets)),
                               metric("В прошлом периоде", Double(accent.previousDirectSets))]))
@@ -116,7 +139,7 @@ struct PersonalInsightMetric {
         for group in analysis.groups where group.directSets > 0 && group.indirectSets >= 2 && group.trainingDays >= 2 {
             candidates.append(PersonalInsight(id: "indirect-\(group.target.category)",
                 category: .muscleStructure, title: "Косвенная работа: \(group.target.category.rawValue)",
-                explanation: "Помимо \(group.directSets) прямых подходов, группа участвовала косвенно в \(group.indirectSets) подходах за \(group.trainingDays) тренировочных дня. Эти виды работы учитываются отдельно.",
+                explanation: "За период: \(group.directSets) прямых и \(group.indirectSets) косвенных подходов; группа встречалась в \(group.trainingDays) тренировочных днях.",
                 priority: 25, confidence: confidence(group.observationCount), period: interval,
                 metrics: [metric("Прямые подходы", Double(group.directSets)),
                           metric("Косвенные подходы", Double(group.indirectSets)),
@@ -127,7 +150,7 @@ struct PersonalInsightMetric {
         if regularity.consecutiveActiveWeeks >= 2 {
             candidates.append(PersonalInsight(id: "active-week-streak", category: .regularity,
                 title: "Серия активных недель",
-                explanation: "Активность сохраняется \(regularity.consecutiveActiveWeeks) недели подряд.",
+                explanation: "Подряд активных недель: \(regularity.consecutiveActiveWeeks). В каждой есть записанный результат.",
                 priority: 50, confidence: confidence(regularity.consecutiveActiveWeeks),
                 period: regularity.streakPeriod ?? interval,
                 metrics: [metric("Активные недели подряд", Double(regularity.consecutiveActiveWeeks))]))
@@ -145,24 +168,40 @@ struct PersonalInsightMetric {
         if let missed = regularity.inactiveWeeksBeforeReturn, regularity.workoutCount > 0 {
             candidates.append(PersonalInsight(id: "return-after-break", category: .regularity,
                 title: "Возвращение к тренировкам",
-                explanation: "После перерыва в \(missed) полные недели снова есть записанная тренировка.",
+                explanation: "После \(missed) полных недель без записанных тренировок появилась новая запись.",
                 priority: 65, confidence: .supported, period: regularity.returnPeriod ?? interval,
                 metrics: [metric("Полные недели перерыва", Double(missed)),
                           metric("Тренировки выбранного периода", Double(regularity.workoutCount))]))
         }
 
         var seen = Set<String>()
-        let selected = candidates.sorted { $0.priority == $1.priority ? $0.id < $1.id : $0.priority > $1.priority }
+        let ranked = candidates.sorted { $0.priority == $1.priority ? $0.id < $1.id : $0.priority > $1.priority }
             .filter { candidate in
                 let key = candidate.id.hasPrefix("indirect-") ? "indirect-work" : candidate.id.replacingOccurrences(of: "pr-exercise-", with: "exercise-")
                     .replacingOccurrences(of: "progress-exercise-", with: "exercise-")
                     .replacingOccurrences(of: "stable-exercise-", with: "exercise-")
+                    .replacingOccurrences(of: "decline-exercise-", with: "exercise-")
                     .replacingOccurrences(of: "dynamics-exercise-", with: "exercise-")
                 return seen.insert(key).inserted
             }
+        // Lead with a confirmed pattern when one exists; a record remains the lead
+        // when it is the only substantive observation. Fill the summary by category
+        // before allowing several records of the same kind.
+        var selected: [PersonalInsight] = []
+        if let lead = ranked.first(where: { $0.category != .achievement && $0.priority >= 50 }) ?? ranked.first {
+            selected.append(lead)
+        }
+        for candidate in ranked where selected.count < 5 {
+            if !selected.contains(where: { $0.category == candidate.category }) {
+                selected.append(candidate)
+            }
+        }
+        for candidate in ranked where selected.count < 5 && !selected.contains(where: { $0.id == candidate.id }) {
+            selected.append(candidate)
+        }
         return PersonalInsightsResult(readiness: analysis.readiness,
                                       observationCount: analysis.observationCount,
-                                      insights: Array(selected.prefix(5)))
+                                      insights: selected)
     }
 }
 
