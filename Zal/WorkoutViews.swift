@@ -8,6 +8,14 @@ private enum PageStyle {
     static let canvas = Color(red: 0.985, green: 0.985, blue: 0.988)
 }
 
+private extension View {
+    func floatingTabBarClearance() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 80)
+        }
+    }
+}
+
 @MainActor private func insightDisplayEnd(_ interval: DateInterval) -> Date {
     let calendar = WorkoutStore.statisticsCalendar
     return interval.end == calendar.startOfDay(for: interval.end)
@@ -490,6 +498,7 @@ struct WorkoutHistoryView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .floatingTabBarClearance()
         .background(PageStyle.canvas)
         .tint(PageStyle.ink)
         .navigationTitle("История тренировок")
@@ -1401,6 +1410,7 @@ struct InsightsView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 20)
         }
+        .floatingTabBarClearance()
         .background(PageStyle.canvas.ignoresSafeArea())
         .foregroundStyle(PageStyle.ink)
         .navigationTitle("Инсайты")
@@ -1583,6 +1593,7 @@ private struct MuscleStructureView: View {
             }
             .padding(18)
         }
+        .floatingTabBarClearance()
         .background(PageStyle.canvas.ignoresSafeArea())
         .navigationTitle("Мышечная структура")
         .navigationBarTitleDisplayMode(.inline)
@@ -1701,6 +1712,7 @@ private struct ExerciseAnalysisView: View {
             }
             .padding(18)
         }
+        .floatingTabBarClearance()
         .background(PageStyle.canvas.ignoresSafeArea())
         .navigationTitle("Прогресс")
         .navigationBarTitleDisplayMode(.inline)
