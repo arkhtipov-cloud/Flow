@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import PhotosUI
+import UniformTypeIdentifiers
 
 private enum PageStyle {
     static let ink = ThemePalette.ink
@@ -37,6 +38,40 @@ struct EditorRequest: Identifiable {
     let isTemplate: Bool
 }
 
+private struct ExerciseReorderModifier: ViewModifier {
+    let workoutID: UUID
+    let exerciseID: UUID
+    let move: (UUID) -> Void
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .onDrag {
+                NSItemProvider(object: "\(workoutID.uuidString)/\(exerciseID.uuidString)" as NSString)
+            }
+            .onDrop(of: [UTType.text], isTargeted: $isTargeted) { providers in
+                guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+                provider.loadObject(ofClass: NSString.self) { value, _ in
+                    guard let text = value as? String else { return }
+                    let parts = text.split(separator: "/")
+                    guard parts.count == 2, UUID(uuidString: String(parts[0])) == workoutID,
+                          let sourceID = UUID(uuidString: String(parts[1])), sourceID != exerciseID else { return }
+                    Task { @MainActor in
+                        withAnimation(.easeInOut(duration: 0.22)) { move(sourceID) }
+                    }
+                }
+                return true
+            }
+            .overlay {
+                if isTargeted {
+                    RoundedRectangle(cornerRadius: 21)
+                        .stroke(ThemePalette.ink.opacity(0.3), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
 struct WorkoutEditorView: View {
     @EnvironmentObject private var store: WorkoutStore
     @Environment(\.dismiss) private var dismiss
@@ -69,6 +104,9 @@ struct WorkoutEditorView: View {
                                 Button("Удалить", role: .destructive) {
                                     exercise.sets.remove(at: index)
                                 }
+                                .tint(.red)
+                                .foregroundStyle(.white)
+                                .buttonStyle(.automatic)
                             }
                         }
                     }
@@ -90,6 +128,10 @@ struct WorkoutEditorView: View {
                         }
                         .accessibilityLabel("Удалить упражнение \(exercise.name)")
                     }
+                    .contentShape(Rectangle())
+                    .modifier(ExerciseReorderModifier(workoutID: record.id, exerciseID: exercise.id) { sourceID in
+                        record.moveExercise(sourceID, to: exercise.id)
+                    })
                 }
             }
 
@@ -283,6 +325,8 @@ struct ExerciseLibraryView: View {
     @Environment(\.dismiss) private var dismiss
     var onSelect: ((ExerciseDefinition) -> Void)? = nil
     @State private var selectedCategory: ExerciseCategory = .chest
+    @State private var searchText = ""
+    @State private var isSearchPresented = false
     @State private var previewExercise: ExerciseDefinition?
 
     private struct LibraryGroup: Identifiable {
@@ -291,18 +335,37 @@ struct ExerciseLibraryView: View {
         let exercises: [ExerciseDefinition]
     }
 
+    private enum LibraryRow: Identifiable {
+        case heading(Int, String)
+        case exercise(ExerciseDefinition)
+
+        var id: String {
+            switch self {
+            case .heading(let id, _): "heading-\(id)"
+            case .exercise(let exercise): exercise.id.uuidString
+            }
+        }
+    }
+
+    private var visibleRows: [LibraryRow] {
+        visibleGroups.flatMap { group in
+            let heading = group.title.map { [LibraryRow.heading(group.id, $0)] } ?? []
+            return heading + group.exercises.map(LibraryRow.exercise)
+        }
+    }
+
     private var standardGroups: [(String?, [String])] {
         switch selectedCategory {
         case .chest:
-            return [("СРЕДНЯЯ ЧАСТЬ ГРУДИ", ["Жим штанги лёжа", "Жим гантелей лёжа", "Сведение рук в кроссовере"]), ("ВЕРХ ГРУДИ", ["Жим гантелей на наклонной скамье"]), ("НИЗ ГРУДИ", ["Отжимания на брусьях"])]
+            return [("СРЕДНЯЯ ЧАСТЬ ГРУДИ", ["Жим штанги лёжа", "Жим гантелей лёжа", "Сведение рук в кроссовере", "Бабочка", "Жим от груди в тренажёре"]), ("ВЕРХ ГРУДИ", ["Жим гантелей на наклонной скамье"]), ("НИЗ ГРУДИ", ["Отжимания на брусьях"])]
         case .back:
-            return [("ШИРОЧАЙШИЕ", ["Подтягивания", "Подтягивания с весом", "Тяга верхнего блока", "Тяга гантели одной рукой"]), ("СРЕДНЯЯ ЧАСТЬ СПИНЫ", ["Тяга горизонтального блока", "Тяга штанги к поясу"]), ("ТРАПЕЦИИ", ["Шраги с гантелями", "Шраги со штангой"])]
+            return [("ШИРОЧАЙШИЕ", ["Подтягивания", "Подтягивания с весом", "Тяга верхнего блока", "Тяга гантели одной рукой", "Пуловер в тренажёре"]), ("СРЕДНЯЯ ЧАСТЬ СПИНЫ", ["Тяга горизонтального блока", "Тяга штанги к поясу"]), ("ТРАПЕЦИИ", ["Шраги с гантелями", "Шраги со штангой"])]
         case .legs:
             return [("КВАДРИЦЕПС", ["Приседания со штангой", "Жим ногами", "Разгибание ног"]), ("ЯГОДИЧНЫЕ", ["Румынская тяга"]), ("ЗАДНЯЯ ПОВЕРХНОСТЬ БЕДРА", ["Сгибание ног"]), ("ИКРОНОЖНЫЕ", ["Подъём на носки"])]
         case .shoulders:
-            return [("ПЕРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей перед собой", "Жим гантелей сидя", "Жим штанги стоя"]), ("СРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей в стороны", "Тяга штанги к подбородку"]), ("ЗАДНЯЯ ДЕЛЬТА", ["Разведение гантелей в наклоне"])]
+            return [("ПЕРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей перед собой", "Жим гантелей сидя", "Жим штанги стоя", "Жим на плечи в тренажёре"]), ("СРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей в стороны", "Тяга штанги к подбородку"]), ("ЗАДНЯЯ ДЕЛЬТА", ["Разведение гантелей в наклоне"])]
         case .biceps:
-            return [("БИЦЕПС", ["Подъём штанги на бицепс", "Подъём гантелей на бицепс"]), ("БРАХИАЛИС", ["Молотковые сгибания"])]
+            return [("БИЦЕПС", ["Подъём штанги на бицепс", "Подъём гантелей на бицепс", "Сгибание рук в тренажёре"]), ("БРАХИАЛИС", ["Молотковые сгибания"])]
         case .triceps:
             return [(nil, ["Разгибание рук на блоке", "Французский жим", "Разгибание руки из-за головы"])]
         case .forearms:
@@ -315,6 +378,11 @@ struct ExerciseLibraryView: View {
     }
 
     private var visibleGroups: [LibraryGroup] {
+        if isSearchPresented || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let matches = store.exercises.filter { $0.matchesSearch(searchText) }
+                .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+            return matches.isEmpty ? [] : [LibraryGroup(id: 0, title: nil, exercises: matches)]
+        }
         let available = store.exercises.filter { $0.category == selectedCategory }
         let groups = standardGroups.enumerated().compactMap { index, definition -> LibraryGroup? in
             let standard = definition.1.compactMap { name in
@@ -333,71 +401,100 @@ struct ExerciseLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(ExerciseCategory.allCases) { category in
-                        Button { selectedCategory = category } label: {
-                            Text(category.rawValue)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(selectedCategory == category ? ThemePalette.onAccent : PageStyle.ink)
-                                .padding(.horizontal, 16)
-                                .frame(height: 38)
-                                .background(selectedCategory == category ? PageStyle.ink : ThemePalette.surface, in: Capsule())
+            if !isSearchPresented {
+                ScrollViewReader { categoryProxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(ExerciseCategory.allCases) { category in
+                                Button { selectedCategory = category } label: {
+                                    Text(category.rawValue)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(selectedCategory == category ? ThemePalette.onAccent : PageStyle.ink)
+                                        .padding(.horizontal, 16)
+                                        .frame(height: 38)
+                                        .background(selectedCategory == category ? PageStyle.ink : ThemePalette.surface, in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .id(category)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                    }
+                    .onChange(of: selectedCategory) { _, category in
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            categoryProxy.scrollTo(category, anchor: .center)
+                        }
+                    }
+                    .onAppear {
+                        categoryProxy.scrollTo(selectedCategory, anchor: .center)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
-            .padding(.vertical, 14)
 
             List {
-                ForEach(visibleGroups) { group in
-                    if let title = group.title {
+                // One stable List row per ID, including when search removes group headings.
+                ForEach(visibleRows) { row in
+                    switch row {
+                    case .heading(_, let title):
                         Text(title)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(PageStyle.muted)
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 2, trailing: 16))
-                    }
-                    ForEach(group.exercises) { exercise in
-                    HStack(spacing: 12) {
-                        Button {
-                            onSelect?(exercise)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(exercise.name)
-                                    .font(.system(size: 16, weight: .medium))
-                                if exercise.isCustom {
-                                    Text("Своё")
-                                        .font(.system(size: 12))
-                                    .foregroundStyle(PageStyle.muted)
+                    case .exercise(let exercise):
+                        HStack(spacing: 12) {
+                            Button {
+                                onSelect?(exercise)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(exercise.name)
+                                        .font(.system(size: 16, weight: .medium))
+                                    if exercise.isCustom {
+                                        Text("Своё")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(PageStyle.muted)
+                                    }
                                 }
+                                .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
-                            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            Button {
+                                previewExercise = exercise
+                            } label: {
+                                ExerciseLibraryIllustration(exercise: exercise, size: 48)
+                                    .equatable()
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Увеличить иллюстрацию: \(exercise.name)")
                         }
-                        .buttonStyle(.plain)
-                        Button {
-                            previewExercise = exercise
-                        } label: {
-                            illustration(for: exercise, size: 48)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Увеличить иллюстрацию: \(exercise.name)")
-                    }
-                    .foregroundStyle(PageStyle.ink)
+                        .foregroundStyle(PageStyle.ink)
                     }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 25).onEnded { value in
+                    let horizontal = value.translation.width
+                    guard !isSearchPresented, abs(horizontal) > 50,
+                          abs(horizontal) > abs(value.translation.height) * 1.2,
+                          let index = ExerciseCategory.allCases.firstIndex(of: selectedCategory) else { return }
+                    let next = index + (horizontal < 0 ? 1 : -1)
+                    guard ExerciseCategory.allCases.indices.contains(next) else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedCategory = ExerciseCategory.allCases[next]
+                    }
+                }
+            )
         }
         .background(PageStyle.canvas.ignoresSafeArea())
         .tint(PageStyle.ink)
         .navigationTitle("Добавить упражнение")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, isPresented: $isSearchPresented, prompt: "Поиск упражнений")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Готово") { dismiss() } }
         }
@@ -446,7 +543,18 @@ struct ExerciseLibraryView: View {
         }
     }
 
-    private func illustration(for exercise: ExerciseDefinition, size: CGFloat) -> some View {
+}
+
+private struct ExerciseLibraryIllustration: View, Equatable {
+    @EnvironmentObject private var store: WorkoutStore
+    let exercise: ExerciseDefinition
+    let size: CGFloat
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.exercise == rhs.exercise && lhs.size == rhs.size
+    }
+
+    var body: some View {
         Group {
             if let customImage = store.customIllustration(for: exercise) {
                 Image(uiImage: customImage)
@@ -511,6 +619,12 @@ struct WorkoutHistoryView: View {
                             }
                             .foregroundStyle(PageStyle.ink)
                             .padding(.vertical, 5)
+                        }
+                        .swipeActions {
+                            Button("Удалить", role: .destructive) { store.delete(workout) }
+                                .tint(.red)
+                                .foregroundStyle(.white)
+                                .buttonStyle(.automatic)
                         }
                     }
                 }
@@ -578,7 +692,7 @@ private enum HistorySummary {
     }
 
     static func score(_ exercise: WorkoutExercise, distance: Bool = false) -> Double? {
-        let values: [Double] = exercise.sets.compactMap { entry in
+        let values: [Double] = exercise.analysisSets.compactMap { entry in
             switch exercise.trackingType {
             case .weightReps:
                 guard entry.hasRecordedResult(for: .weightReps), (1...12).contains(entry.repetitions) else { return nil }
@@ -857,6 +971,9 @@ struct TemplatesView: View {
                 .foregroundStyle(PageStyle.ink)
                 .swipeActions {
                     Button("Удалить", role: .destructive) { store.delete(template) }
+                        .tint(.red)
+                        .foregroundStyle(.white)
+                        .buttonStyle(.automatic)
                 }
             }
         }
@@ -886,6 +1003,7 @@ struct WorkoutsTabView: View {
     @State private var showingNoteEditor = false
     @State private var noteDraft = ""
     @State private var selectedDate = Calendar.current.startOfDay(for: .now)
+    @State private var displayedCalendarDate = Calendar.current.startOfDay(for: .now)
     @State private var expandedExerciseID: UUID?
     @State private var pendingScrollSetID: UUID?
     @State private var dayTransitionDirection = 1
@@ -900,7 +1018,7 @@ struct WorkoutsTabView: View {
     }
 
     private var weekStart: Date {
-        calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start ?? selectedDate
+        calendar.dateInterval(of: .weekOfYear, for: displayedCalendarDate)?.start ?? displayedCalendarDate
     }
 
     private var selectedWorkouts: [WorkoutRecord] {
@@ -1021,13 +1139,20 @@ struct WorkoutsTabView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .background(exerciseCardBackground(top: true, bottom: expandedExerciseID != exercise.id || (exercise.trackingType == .cardio && exercise.sets.isEmpty && previousSplitHint(for: exercise, in: workout) == nil)))
                                 .listRowInsets(EdgeInsets())
                                 .listRowSeparator(.hidden)
-                                .listRowBackground(exerciseCardBackground(top: true, bottom: expandedExerciseID != exercise.id || (exercise.trackingType == .cardio && exercise.sets.isEmpty && previousSplitHint(for: exercise, in: workout) == nil)))
+                                .listRowBackground(Color.clear)
+                                .modifier(ExerciseReorderModifier(workoutID: workout.id, exerciseID: exercise.id) { sourceID in
+                                    store.moveExercise(sourceID, to: exercise.id, in: workout.id)
+                                })
                                 .swipeActions {
                                     Button("Удалить", role: .destructive) {
                                         removeExercise(exercise, from: workout)
                                     }
+                                    .tint(.red)
+                                    .foregroundStyle(.white)
+                                    .buttonStyle(.automatic)
                                 }
                                 if expandedExerciseID == exercise.id {
                                     if let hint = previousSplitHint(for: exercise, in: workout) {
@@ -1036,22 +1161,29 @@ struct WorkoutsTabView: View {
                                             .foregroundStyle(PageStyle.muted)
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 8)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && exercise.sets.isEmpty))
                                             .listRowInsets(EdgeInsets())
                                             .listRowSeparator(.hidden)
-                                            .listRowBackground(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && exercise.sets.isEmpty))
+                                            .listRowBackground(Color.clear)
                                     }
                                     ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, entry in
                                         SetInputRow(entry: setBinding(workout: workout, exercise: exercise, set: entry), number: index + 1, trackingType: exercise.trackingType, previousEntry: index > 0 ? exercise.sets[index - 1] : nil, inCard: true, focusedInput: $focusedInput)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && index == exercise.sets.count - 1))
                                     .listRowInsets(EdgeInsets())
                                     .listRowSeparator(.hidden)
-                                    .listRowBackground(exerciseCardBackground(top: false, bottom: exercise.trackingType == .cardio && index == exercise.sets.count - 1))
+                                    .listRowBackground(Color.clear)
                                     .swipeActions {
                                         if exercise.trackingType != .cardio {
                                             Button("Удалить", role: .destructive) {
                                                 removeSet(entry, from: exercise, in: workout)
                                             }
+                                            .tint(.red)
+                                            .foregroundStyle(.white)
+                                            .buttonStyle(.automatic)
                                         }
                                     }
                                     .id(entry.id)
@@ -1069,9 +1201,10 @@ struct WorkoutsTabView: View {
                                         .buttonStyle(.plain)
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 4)
+                                        .background(exerciseCardBackground(top: false, bottom: true))
                                         .listRowInsets(EdgeInsets())
                                         .listRowSeparator(.hidden)
-                                        .listRowBackground(exerciseCardBackground(top: false, bottom: true))
+                                        .listRowBackground(Color.clear)
                                     }
                                 }
                             }
@@ -1084,6 +1217,18 @@ struct WorkoutsTabView: View {
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if focusedInput != nil {
+                    HStack {
+                        Spacer()
+                        Button("Готово") { focusedInput = nil }
+                            .font(.system(size: 15, weight: .semibold))
+                            .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
             .contentShape(Rectangle())
             .background(PageStyle.canvas.contentShape(Rectangle()).onTapGesture { focusedInput = nil })
             .scrollDismissesKeyboard(.interactively)
@@ -1103,46 +1248,56 @@ struct WorkoutsTabView: View {
                     }
                 }
             }
-            }
-
-            HStack(spacing: 22) {
-                NavigationLink("История", destination: WorkoutHistoryView())
-                NavigationLink("Шаблоны", destination: TemplatesView())
-                if let workout = selectedWorkouts.last {
-                    Button("Заметка") {
-                        noteDraft = workout.note ?? ""
-                        showingNoteEditor = true
-                    }
+            .onChange(of: focusedInput) { _, input in
+                guard let input else { return }
+                let setID: UUID
+                switch input {
+                case .title: return
+                case .weight(let id), .repetitions(let id), .minutes(let id), .seconds(let id), .distance(let id):
+                    setID = id
+                }
+                Task { @MainActor in
+                    await Task.yield()
+                    scrollProxy.scrollTo(setID, anchor: .center)
                 }
             }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(PageStyle.muted)
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 14)
-
-            Button {
-                showingExercisePicker = true
-            } label: {
-                Label("Упражнение", systemImage: "plus")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 58)
-                    .foregroundStyle(ThemePalette.onAccent)
-                    .background(PageStyle.ink, in: Capsule())
             }
-            .buttonStyle(PressableCardStyle())
-            .padding(.bottom, 12)
+
+            if focusedInput == nil {
+                HStack(spacing: 22) {
+                    NavigationLink("История", destination: WorkoutHistoryView())
+                    NavigationLink("Шаблоны", destination: TemplatesView())
+                    if let workout = selectedWorkouts.last {
+                        Button("Заметка") {
+                            noteDraft = workout.note ?? ""
+                            showingNoteEditor = true
+                        }
+                    }
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(PageStyle.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 14)
+
+                Button {
+                    showingExercisePicker = true
+                } label: {
+                    Label("Упражнение", systemImage: "plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 58)
+                        .foregroundStyle(ThemePalette.onAccent)
+                        .background(PageStyle.ink, in: Capsule())
+                }
+                .buttonStyle(PressableCardStyle())
+                .padding(.bottom, 12)
+            }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .foregroundStyle(PageStyle.ink)
         .padding(.horizontal, 20)
         .background(PageStyle.canvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Готово") { focusedInput = nil }
-            }
-        }
         .sheet(isPresented: $showingExercisePicker) {
             NavigationStack {
                 ExerciseLibraryView { definition in
@@ -1184,7 +1339,7 @@ struct WorkoutsTabView: View {
                         .frame(width: 40, height: 40)
                 }
                 Spacer()
-                Text(selectedDate.formatted(.dateTime.month(.wide).year()))
+                Text(displayedCalendarDate.formatted(.dateTime.month(.wide).year()))
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button { moveMonth(1) } label: {
@@ -1232,8 +1387,8 @@ struct WorkoutsTabView: View {
                                 var transaction = Transaction(animation: nil)
                                 transaction.disablesAnimations = true
                                 withTransaction(transaction) {
-                                    if direction != 0, let day = calendar.date(byAdding: .weekOfYear, value: direction, to: selectedDate) {
-                                        selectDate(day, animated: false)
+                                    if direction != 0, let day = calendar.date(byAdding: .weekOfYear, value: direction, to: displayedCalendarDate) {
+                                        displayedCalendarDate = day
                                     }
                                     weekDragOffset = 0
                                     isWeekSettling = false
@@ -1242,7 +1397,7 @@ struct WorkoutsTabView: View {
                         }
                 )
             }
-            .frame(height: 58)
+            .frame(height: 64)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 14)
@@ -1275,15 +1430,16 @@ struct WorkoutsTabView: View {
     }
 
     private func moveMonth(_ offset: Int) {
-        guard let monthStart = calendar.dateInterval(of: .month, for: selectedDate)?.start,
+        guard !isWeekSettling,
+              let monthStart = calendar.dateInterval(of: .month, for: displayedCalendarDate)?.start,
               let targetMonth = calendar.date(byAdding: .month, value: offset, to: monthStart),
               let validDays = calendar.range(of: .day, in: .month, for: targetMonth),
-              let day = calendar.date(byAdding: .day, value: min(calendar.component(.day, from: selectedDate), validDays.count) - 1, to: targetMonth) else { return }
+              let day = calendar.date(byAdding: .day, value: min(calendar.component(.day, from: displayedCalendarDate), validDays.count) - 1, to: targetMonth) else { return }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             weekDragOffset = 0
-            selectDate(day, animated: false)
+            displayedCalendarDate = day
         }
     }
 
@@ -1294,6 +1450,7 @@ struct WorkoutsTabView: View {
         dayTransitionDirection = day > selectedDate ? 1 : -1
         let update = {
             selectedDate = day
+            displayedCalendarDate = day
             expandedExerciseID = nil
             pendingScrollSetID = nil
         }
@@ -1350,8 +1507,12 @@ struct WorkoutsTabView: View {
             (2...4).contains(count % 10) && !(12...14).contains(count % 100) ? "подхода" : "подходов"
         let result: String
         switch exercise.trackingType {
-        case .weightReps: result = "\(last.weight.formatted()) кг × \(last.repetitions)"
-        case .reps: result = "\(last.repetitions) повт."
+        case .weightReps:
+            let heaviest = recorded.max {
+                $0.weight == $1.weight ? $0.repetitions < $1.repetitions : $0.weight < $1.weight
+            } ?? last
+            result = "\(heaviest.weight.formatted()) кг × \(heaviest.repetitions)"
+        case .reps: result = "\(recorded.map(\.repetitions).max() ?? last.repetitions) повт."
         case .duration:
             result = last.durationSeconds < 60
                 ? "\(last.durationSeconds) сек"
@@ -1417,6 +1578,7 @@ struct InsightsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var period: StatsPeriod = .month
     @State private var selectedEvidence: InsightEvidenceSelection?
+    @State private var showingActiveWeeks = false
 
     private var analysis: MuscleAnalysisSnapshot {
         MuscleAnalysisEngine.analyze(store: store, period: period)
@@ -1503,6 +1665,9 @@ struct InsightsView: View {
                 RecommendationDetailView(recommendation: recommendation, period: period)
             }
         }
+        .sheet(isPresented: $showingActiveWeeks) {
+            ActiveWeeksSheet(currentStreak: snapshot.regularity.consecutiveActiveWeeks)
+        }
     }
 
     private func heroCard(snapshot: MuscleAnalysisSnapshot, featured: PersonalInsight?) -> some View {
@@ -1548,7 +1713,11 @@ struct InsightsView: View {
             metricsLayout {
                 metricCard(value: "\(snapshot.regularity.workoutCount)", title: "Тренировки", symbol: "dumbbell")
                 metricCard(value: snapshot.historyAgeDays == 0 && snapshot.observationCount == 0 ? "—" : "\(snapshot.historyAgeDays)", title: "Дней с первой записи", symbol: "calendar")
-                metricCard(value: "\(snapshot.regularity.activeWeekCount)", title: "Активные недели", symbol: "chart.bar")
+                Button { showingActiveWeeks = true } label: {
+                    metricCard(value: "\(snapshot.regularity.consecutiveActiveWeeks)", title: "Серия недель", symbol: "chart.bar")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Серия активных недель: \(snapshot.regularity.consecutiveActiveWeeks). Подробнее")
             }
         }
         .padding(16)
@@ -1626,6 +1795,116 @@ struct InsightsView: View {
 
     private func periodLabel(_ interval: DateInterval) -> String {
         "\(interval.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(interval).formatted(date: .abbreviated, time: .omitted))"
+    }
+}
+
+private struct ActiveWeeksSheet: View {
+    @EnvironmentObject private var store: WorkoutStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedWeek: Date?
+    let currentStreak: Int
+
+    private var calendar: Calendar { WorkoutStore.statisticsCalendar }
+
+    private var weeks: [MuscleAnalysisWeek] {
+        let workouts = store.workouts.filter { workout in
+            workout.date <= .now && workout.exercises.contains { exercise in
+                exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
+            }
+        }
+        guard let first = workouts.map(\.date).min(),
+              let firstWeek = calendar.dateInterval(of: .weekOfYear, for: first),
+              let currentWeek = calendar.dateInterval(of: .weekOfYear, for: .now) else { return [] }
+        var result: [MuscleAnalysisWeek] = []
+        var start = firstWeek.start
+        while start <= currentWeek.start {
+            let count = workouts.filter { calendar.dateInterval(of: .weekOfYear, for: $0.date)?.start == start }.count
+            result.append(MuscleAnalysisWeek(start: start, workoutCount: count))
+            guard let next = calendar.date(byAdding: .weekOfYear, value: 1, to: start) else { break }
+            start = next
+        }
+        return result
+    }
+
+    private var longestStreak: Int {
+        var longest = 0
+        var ongoing = 0
+        for week in weeks {
+            ongoing = week.isActive ? ongoing + 1 : 0
+            longest = max(longest, ongoing)
+        }
+        return longest
+    }
+
+    var body: some View {
+        let history = weeks
+        let selected = history.first { $0.start == selectedWeek } ?? history.last
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    streakValue(currentStreak, title: "Текущая серия")
+                    streakValue(longestStreak, title: "Самая длинная")
+                }
+                if history.isEmpty {
+                    Text("Пока нет завершённых тренировок с записанными результатами.")
+                        .font(.footnote)
+                        .foregroundStyle(PageStyle.muted)
+                } else {
+                    Text("Недели · пн–вс")
+                        .font(.footnote.weight(.semibold))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(history.reversed())) { week in
+                                let isCurrentWeek = week.start == calendar.dateInterval(of: .weekOfYear, for: .now)?.start
+                                Button { selectedWeek = week.start } label: {
+                                    Text(week.start.formatted(.dateTime.day().month(.abbreviated)))
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(week.isActive ? ThemePalette.onAccent : PageStyle.ink)
+                                        .padding(.horizontal, 11)
+                                        .frame(height: 36)
+                                        .background(week.isActive ? PageStyle.ink : isCurrentWeek ? ThemePalette.surface : ThemePalette.soft,
+                                                    in: RoundedRectangle(cornerRadius: 11))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 11)
+                                                .stroke(selected?.start == week.start ? PageStyle.muted : isCurrentWeek ? ThemePalette.track : .clear, lineWidth: 1)
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    if let selected,
+                       let sunday = calendar.date(byAdding: .day, value: 6, to: selected.start) {
+                        Text("\(selected.start.formatted(date: .abbreviated, time: .omitted)) — \(sunday.formatted(date: .abbreviated, time: .omitted)) · \(selected.workoutCount) тренировок")
+                            .font(.footnote)
+                            .foregroundStyle(PageStyle.muted)
+                        if selected.start == calendar.dateInterval(of: .weekOfYear, for: .now)?.start && !selected.isActive {
+                            Text("Текущая неделя ещё продолжается.")
+                                .font(.footnote)
+                                .foregroundStyle(PageStyle.muted)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PageStyle.canvas.ignoresSafeArea())
+            .navigationTitle("Серия активных недель")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func streakValue(_ value: Int, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(value)").font(.title2.weight(.semibold)).monospacedDigit()
+            Text(title).font(.caption).foregroundStyle(PageStyle.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -2128,6 +2407,9 @@ private struct CustomExercisesView: View {
                     }
                     .swipeActions {
                         Button("Удалить", role: .destructive) { store.deleteExercise(exercise) }
+                            .tint(.red)
+                            .foregroundStyle(.white)
+                            .buttonStyle(.automatic)
                     }
                 }
             }

@@ -274,7 +274,7 @@ struct MuscleAnalysisSnapshot {
                 let direct = MuscleTarget(primary)
                 let directAccent = map.primaryAccent.map { MuscleTarget(primary, $0) }
                 let secondary = Set(map.secondaryMuscles.filter { $0.category != .cardio && $0 != directAccent })
-                for entry in exercise.sets where valid(entry, type: exercise.trackingType) {
+                for entry in exercise.analysisSets where valid(entry, type: exercise.trackingType) {
                     add(direct: true, target: direct, exerciseID: exercise.exerciseID, day: day,
                         accent: map.primaryAccent, to: &data.activities)
                     if let directAccent {
@@ -468,7 +468,7 @@ struct MuscleAnalysisSnapshot {
     }
 
     private static func bestValue(_ exercise: WorkoutExercise, metric: ExerciseResultMetric) -> Double? {
-        let values: [Double] = exercise.sets.compactMap { entry in
+        let values: [Double] = exercise.analysisSets.compactMap { entry in
             switch (exercise.trackingType, metric) {
             case (.weightReps, .estimatedOneRepMax):
                 guard entry.hasRecordedResult(for: .weightReps), (1...12).contains(entry.repetitions) else { return nil }

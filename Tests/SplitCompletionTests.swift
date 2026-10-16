@@ -89,7 +89,164 @@ struct SplitCompletionTests {
         testBuiltInMuscleMaps()
         testExerciseTrends()
         testInsightWording()
+        testWarmupClassification()
+        testRepetitionRecords()
+        testExerciseOrdering()
         print("PASS: split completion, continuation, editing and skipping")
+    }
+
+
+    static func testExerciseOrdering() {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("exercise-order-tests-\(UUID().uuidString).json")
+        let store = WorkoutStore(fileURL: file)
+        let definitions = Array(ExerciseDefinition.builtIn.prefix(3))
+        let exercises = definitions.enumerated().map { index, definition in
+            WorkoutExercise(exerciseID: definition.id, name: definition.name,
+                            sets: [SetEntry(weight: Double(30 + index * 10), repetitions: 8)],
+                            trackingType: definition.trackingType)
+        }
+        let record = WorkoutRecord(title: "Порядок", exercises: exercises)
+        store.upsert(record)
+        let original = store.records.first { $0.id == record.id }!
+        let ids = original.exercises.map(\.id)
+        store.moveExercise(ids[0], to: ids[2], in: record.id)
+        expect(store.records.first { $0.id == record.id }!.exercises.map(\.id) == [ids[1], ids[2], ids[0]],
+               "Dragging down moves the entire exercise after its destination")
+        store.moveExercise(ids[0], to: ids[1], in: record.id)
+        expect(store.records.first { $0.id == record.id }!.exercises == original.exercises,
+               "Dragging back up restores the exact exercise values, sets and snapshots")
+        store.moveExercise(ids[2], to: ids[0], in: record.id)
+        let moved = store.records.first { $0.id == record.id }!
+        expect(moved.exercises.map(\.id) == [ids[2], ids[0], ids[1]], "Last exercise can become first")
+        store.moveExercise(ids[2], to: ids[2], in: record.id)
+        store.moveExercise(UUID(), to: ids[0], in: record.id)
+        store.moveExercise(ids[0], to: UUID(), in: record.id)
+        store.moveExercise(ids[0], to: ids[1], in: UUID())
+        expect(store.records.first { $0.id == record.id } == moved, "Invalid and self drops cannot mutate a workout")
+        let reloaded = WorkoutStore(fileURL: file)
+        expect(reloaded.workouts.first { $0.id == record.id }?.exercises == moved.exercises,
+               "Persisted order and all exercise data survive reload and feed history unchanged")
+
+        var template = moved
+        template.id = UUID()
+        template.isTemplate = true
+        store.upsert(template)
+        template.moveExercise(ids[1], to: ids[2])
+        store.upsert(template)
+        let savedTemplate = WorkoutStore(fileURL: file).templates.first { $0.id == template.id }!
+        expect(savedTemplate.exercises == template.exercises, "Creating and updating a template preserve the chosen order")
+        var loadedWorkout = savedTemplate
+        loadedWorkout.id = UUID()
+        loadedWorkout.isTemplate = false
+        store.upsert(loadedWorkout)
+        expect(store.workouts.first { $0.id == loadedWorkout.id }?.exercises == savedTemplate.exercises,
+               "Loading an existing workout template preserves its exercise order")
+        let split = SplitWorkoutTemplate(name: "Порядок", exercises: savedTemplate.exercises.map {
+            SplitTemplateExercise(exerciseID: $0.exerciseID, name: $0.name, trackingType: $0.trackingType)
+        })
+        store.upsertSplitTemplate(split)
+        store.setSplitEnabled(true)
+        expect(store.prepareNextSplitWorkout(on: .now)?.exercises.map(\.exerciseID) == savedTemplate.exercises.map(\.exerciseID),
+               "Split template loading must also preserve its stored order")
+        expect(store.records.first { $0.id == record.id } == moved, "Template actions do not change the original workout")
+        print("PASS: exercise moves up/down, invalid drops, persistence, history and template order")
+    }
+
+    static func testRepetitionRecords() {
+        let definition = ExerciseDefinition.builtIn.first { $0.name == "Жим штанги лёжа" }!
+        let calendar = WorkoutStore.statisticsCalendar
+        let day = calendar.date(from: DateComponents(year: 2026, month: 3, day: 1, hour: 12))!
+        func workout(_ offset: Int, _ values: [(Double, Int)], id: UUID? = nil) -> WorkoutRecord {
+            WorkoutRecord(title: "Проверка", date: calendar.date(byAdding: .day, value: offset, to: day)!,
+                          exercises: [WorkoutExercise(exerciseID: id ?? definition.id, name: definition.name,
+                                                      sets: values.map { SetEntry(weight: $0.0, repetitions: $0.1) })])
+        }
+        func records(_ history: [WorkoutRecord]) -> [ExerciseRecord] {
+            InsightsEngine.snapshot(workouts: history, definitions: [definition],
+                                    now: calendar.date(byAdding: .day, value: 25, to: day)!).records
+        }
+        func repetitions(_ history: [WorkoutRecord]) -> ExerciseRecord? {
+            records(history).first { $0.id == "reps-\(definition.id)" }
+        }
+        let earlier = workout(0, [(20, 12), (30, 8)])
+        let improved = workout(10, [(20, 10), (30, 9)])
+        expect(repetitions([earlier, improved])?.result == "30 кг × 9",
+               "A same-weight improvement must not be hidden by more repetitions with another weight")
+        expect(repetitions([improved, earlier])?.result == "30 кг × 9",
+               "Repetition records must follow workout dates rather than input ordering")
+        let sameWeight = [workout(0, [(30, 10)]), workout(10, [(30, 12)])]
+        expect(repetitions(sameWeight)?.result == "30 кг × 12", "Repetitions improve at exactly the same weight")
+        expect(repetitions([workout(0, [(30, 10)]), workout(10, [(30, 10)])]) == nil,
+               "Identical results are not new repetition records")
+        expect(repetitions([workout(0, [(30, 10)]), workout(10, [(30, 9)])]) == nil,
+               "Fewer repetitions cannot create a repetition record")
+        expect(repetitions([workout(0, [(20, 10)]), workout(10, [(30, 12)])]) == nil,
+               "Different weights cannot serve as repetition baselines for each other")
+        expect(repetitions([workout(0, [(30, 8)]), workout(10, [(20, 10), (20, 12)])]) == nil,
+               "Two sets in one workout are not two comparable performances")
+        expect(repetitions([workout(0, [(30, 10)]), workout(10, [(30, 12)], id: UUID())]) == nil,
+               "Different exercise IDs must not share repetition records")
+        expect(repetitions(sameWeight + [workout(20, [(30, 11)])])?.date == sameWeight[1].date,
+               "A later lower result must preserve an earlier confirmed improvement")
+        let result = records([earlier, improved])
+        expect(result.first { $0.id == "strength-\(definition.id)" }?.result == "30 кг × 9" &&
+               result.first { $0.id == "weight-\(definition.id)" }?.result == "30 кг × 8",
+               "Strength and maximum-weight selection must keep their existing rules")
+
+        // Known ambiguity: the stored model cannot prove that an earlier light set was working.
+        let baseline = workout(0, [(20, 10)])
+        let before = workout(10, [(20, 12), (25, 10), (30, 8)])
+        let after = workout(10, [(20, 12), (25, 10), (30, 8), (30, 8)])
+        print("LIMITATION: ambiguous 20 kg record before/after second heavy set: \(repetitions([baseline, before])?.result ?? "none") / \(repetitions([baseline, after])?.result ?? "none")")
+        print("PASS: repetition improvements are compared within weight and exercise, without changing strength records")
+    }
+
+    static func testWarmupClassification() {
+        func sets(_ values: [(Double, Int)]) -> [SetEntry] {
+            values.map { SetEntry(weight: $0.0, repetitions: $0.1) }
+        }
+        func retained(_ values: [(Double, Int)], type: ExerciseTrackingType = .weightReps) -> [Int] {
+            let entries = sets(values)
+            let ids = Set(WorkoutSetClassifier.workingSets(entries, type: type).map(\.id))
+            return entries.indices.filter { ids.contains(entries[$0].id) }
+        }
+        let bench: [(Double, Int)] = [(20, 10), (30, 7), (40, 7), (50, 7), (60, 4), (60, 4), (60, 4)]
+        expect(retained(bench) == [3, 4, 5, 6], "Only clearly light preparation is excluded; 50 kg remains ambiguous")
+        expect(retained([(45, 7), (45, 8), (45, 8)]) == [0, 1, 2], "Butterfly sets all remain working")
+        expect(retained([(60, 4), (60, 4), (60, 4)]) == [0, 1, 2], "Equal working weights stay eligible")
+        expect(retained(bench + [(40, 8), (30, 10)]) == [3, 4, 5, 6, 7, 8], "Lighter back-off sets must survive")
+        expect(retained([(0, 10), (0, 8)], type: .reps) == [0, 1], "Bodyweight exercise sets are never inferred as warmups")
+        expect(retained([(20, 10), (60, 4)]) == [0, 1], "A single heavier set is insufficient evidence")
+        expect(retained([(30, 8), (20, 10), (60, 4), (60, 4)]) == [0, 1, 2, 3], "A mixed prefix is ambiguous")
+        expect(retained([(20, 30), (40, 7), (60, 4), (60, 4)]) == [0, 2, 3], "High-rep effort must not be called light based on weight alone")
+        expect(retained(bench, type: .duration).count == bench.count &&
+               retained(bench, type: .cardio).count == bench.count, "Time and cardio are unchanged")
+
+        let definition = ExerciseDefinition.builtIn.first { $0.name == "Жим штанги лёжа" }!
+        let map = MuscleMap(primaryGroup: .chest, primaryAccent: "Средняя часть груди",
+                            secondaryMuscles: definition.secondaryMuscles)
+        let exercise = WorkoutExercise(exerciseID: definition.id, name: definition.name,
+                                       sets: sets(bench), muscleMapSnapshot: map)
+        let calendar = WorkoutStore.statisticsCalendar
+        let day = calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12))!
+        let record = WorkoutRecord(title: "История", date: day, exercises: [exercise])
+        let restored = try! JSONDecoder().decode(WorkoutRecord.self, from: JSONEncoder().encode(record))
+        expect(restored.id == record.id && restored.exercises[0] == exercise,
+               "Classification must not alter stored sets, IDs or muscle snapshots")
+        expect(restored.exercises[0].analysisSets.map(\.id) == Array(exercise.sets[3...]).map(\.id),
+               "Existing records are classified dynamically after decoding")
+        let store = WorkoutStore(isEphemeral: true)
+        store.upsert(restored)
+        let analysis = MuscleAnalysisEngine.analyze(store: store, period: .month, relativeTo: day)
+        expect(analysis.groups.first { $0.target == MuscleTarget(.chest) }?.directSets == 4 &&
+               analysis.groups.first { $0.target == MuscleTarget(.triceps) }?.indirectSets == 4,
+               "Direct and indirect muscle counts use the same working sets")
+        expect(abs((analysis.exercises.first?.latest ?? 0) - 68) < 0.001,
+               "Strength uses the best eligible effort, not set count")
+        expect(analysis.regularity.workoutCount == 1 && store.snapshot(for: .month, relativeTo: day).totalVolume == 1760,
+               "Regularity and total recorded tonnage must not change")
+        expect(store.records[0].exercises[0].sets.count == 7, "Raw history keeps all seven sets")
+        print("PASS: conservative warmup classification, back-off sets and historical data")
     }
 
     static func testExerciseTrends() {
@@ -256,6 +413,15 @@ struct SplitCompletionTests {
     static func testBuiltInMuscleMaps() {
         let builtIn = ExerciseDefinition.builtIn
         expect(Set(builtIn.map(\.id)).count == builtIn.count, "Built-in UUIDs must remain unique")
+        let pecDeck = builtIn.first { $0.name == "Бабочка" }!
+        expect(builtIn.filter { $0.matchesSearch("бабочка") }.map(\.id) == [pecDeck.id] &&
+               pecDeck.matchesSearch("  СВЕДЕНИЕ РУК  "), "Pec Deck must be searchable by both Russian names without duplicates")
+        expect(pecDeck.id == UUID(uuidString: "00000000-0000-4000-8000-00000000002E") &&
+               pecDeck.category == .chest && pecDeck.muscleAccent == "Средняя часть груди" &&
+               pecDeck.trackingType == .weightReps && pecDeck.secondaryMuscles.isEmpty,
+               "Pec Deck uses a new fixed ID, weight/reps and isolated chest classification")
+        expect(builtIn.first { $0.name == "Сведение рук в кроссовере" }?.id ==
+               UUID(uuidString: "00000000-0000-4000-8000-000000000004"), "Cable crossover keeps its original identity")
         for exercise in builtIn {
             expect(exercise.category == .cardio || exercise.category.accents.contains(exercise.muscleAccent ?? ""),
                    "Every strength exercise needs a valid primary accent: \(exercise.name)")
@@ -273,6 +439,40 @@ struct SplitCompletionTests {
         func targets(_ name: String) -> Set<MuscleTarget> {
             Set(definition(name).secondaryMuscles)
         }
+        let machineQueries = ["Pec Deck", "Жим в грудном тренажёре", "Тяга верхнего блока", "Горизонтальная тяга блока",
+                              "Пуловер в тренажёре", "Жим ногами", "Разгибание ног", "Сгибание ног",
+                              "Сгибание рук в тренажёре на бицепс", "Разгибание рук на верхнем блоке", "Жим плечами в тренажёре"]
+        for query in machineQueries {
+            expect(builtIn.filter { $0.matchesSearch(query) }.count == 1,
+                   "Every requested machine exercise or synonym must resolve once: \(query)")
+        }
+        for (oldName, newName) in [
+            ("Бабочка (сведение рук в тренажёре)", "Бабочка"),
+            ("Жим в грудном тренажёре", "Жим от груди в тренажёре"),
+            ("Сгибание рук в тренажёре на бицепс", "Сгибание рук в тренажёре"),
+            ("Жим плечами в тренажёре", "Жим на плечи в тренажёре")
+        ] {
+            expect(builtIn.filter { $0.matchesSearch(oldName) }.map(\.id) == [definition(newName).id] &&
+                   builtIn.filter { $0.name == oldName }.isEmpty,
+                   "Renaming keeps the old search alias without creating a duplicate: \(oldName)")
+        }
+        let machines = ["Жим от груди в тренажёре", "Пуловер в тренажёре",
+                        "Сгибание рук в тренажёре", "Жим на плечи в тренажёре"]
+        for (index, name) in machines.enumerated() {
+            expect(definition(name).id == UUID(uuidString: String(format: "00000000-0000-4000-8000-%012X", 0x2F + index)) &&
+                   definition(name).trackingType == .weightReps && !definition(name).isCustom,
+                   "Machine additions need fixed new IDs and standard weight/repetition entry")
+        }
+        expect(definition("Жим от груди в тренажёре").category == .chest &&
+               definition("Пуловер в тренажёре").category == .back &&
+               definition("Сгибание рук в тренажёре").category == .biceps &&
+               definition("Жим на плечи в тренажёре").category == .shoulders,
+               "Machine additions must use the existing muscle categories")
+        expect(targets("Жим от груди в тренажёре") == targets("Жим штанги лёжа") &&
+               targets("Жим на плечи в тренажёре") == targets("Жим гантелей сидя") &&
+               targets("Сгибание рук в тренажёре") == targets("Подъём штанги на бицепс") &&
+               targets("Пуловер в тренажёре").isEmpty,
+               "Machine MuscleMaps must reuse their movement's synergists without artificial stabilizer targets")
         let pressTargets: Set<MuscleTarget> = [MuscleTarget(.triceps, "Трицепс"), MuscleTarget(.shoulders, "Передняя дельта")]
         for name in ["Жим штанги лёжа", "Жим гантелей лёжа", "Жим гантелей на наклонной скамье", "Отжимания на брусьях"] {
             expect(targets(name) == pressTargets, "Chest presses must include triceps and front delts: \(name)")
@@ -318,6 +518,16 @@ struct SplitCompletionTests {
         let calendar = Calendar(identifier: .iso8601)
         let date = calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12))!
         let analysisDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 12))!
+        let pecDeckStore = WorkoutStore(isEphemeral: true)
+        pecDeckStore.upsert(WorkoutRecord(title: "Бабочка", date: date, exercises: [
+            WorkoutExercise(exerciseID: pecDeck.id, name: pecDeck.name,
+                            sets: [SetEntry(weight: 45, repetitions: 7), SetEntry(weight: 45, repetitions: 8),
+                                   SetEntry(weight: 45, repetitions: 8)], trackingType: pecDeck.trackingType)
+        ]))
+        let pecDeckAnalysis = MuscleAnalysisEngine.analyze(store: pecDeckStore, period: .month, relativeTo: analysisDate)
+        expect(pecDeckAnalysis.groups.first { $0.target == MuscleTarget(.chest) }?.directSets == 3 &&
+               pecDeckAnalysis.groups.allSatisfy { $0.indirectSets == 0 },
+               "Recorded Pec Deck sets integrate with the existing MuscleMap and analytics")
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("builtin-map-tests-\(UUID().uuidString).json")
         let store = WorkoutStore(fileURL: file)
         let pullup = definition("Подтягивания")

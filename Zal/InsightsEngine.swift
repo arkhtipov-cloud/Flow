@@ -333,9 +333,9 @@ struct InsightsSnapshot {
         for workout in workouts.sorted(by: { $0.date < $1.date }) {
             for exercise in workout.exercises {
                 if let index = result[exercise.exerciseID]?.firstIndex(where: { $0.workoutID == workout.id }) {
-                    result[exercise.exerciseID]?[index].sets += exercise.sets
+                    result[exercise.exerciseID]?[index].sets += exercise.analysisSets
                 } else {
-                    result[exercise.exerciseID, default: []].append(Session(workoutID: workout.id, exerciseID: exercise.exerciseID, name: exercise.name, date: workout.date, trackingType: exercise.trackingType, sets: exercise.sets))
+                    result[exercise.exerciseID, default: []].append(Session(workoutID: workout.id, exerciseID: exercise.exerciseID, name: exercise.name, date: workout.date, trackingType: exercise.trackingType, sets: exercise.analysisSets))
                 }
             }
         }
@@ -412,9 +412,21 @@ struct InsightsSnapshot {
             if let best = efforts.max(by: { $0.1.score < $1.1.score }) {
                 items.append(ExerciseRecord(id: "strength-\(id)", name: name, kind: "Лучший силовой результат", result: resultText(best.1.set, type: type), date: best.0.date))
             }
-            let byWeight = Dictionary(grouping: valid, by: { $0.1.weight })
-            let repeatedWeights = byWeight.values.filter { Set($0.map { $0.0.workoutID }).count >= 2 }
-            if let bestReps = repeatedWeights.flatMap({ $0 }).max(by: { $0.1.repetitions < $1.1.repetitions }) {
+            var previousBestByWeight: [Double: Int] = [:]
+            var bestReps: (Session, SetEntry)?
+            for session in matching {
+                let byWeight = Dictionary(grouping: session.sets.filter { $0.hasRecordedResult(for: type) }, by: \.weight)
+                // Keep the most recent improvement; ties use weight for deterministic selection.
+                // Baselines and multiple sets within one session cannot create a repetition PR.
+                for weight in byWeight.keys.sorted() {
+                    guard let best = byWeight[weight]?.max(by: { $0.repetitions < $1.repetitions }) else { continue }
+                    if let previous = previousBestByWeight[weight], best.repetitions > previous {
+                        bestReps = (session, best)
+                    }
+                    previousBestByWeight[weight] = max(previousBestByWeight[weight] ?? 0, best.repetitions)
+                }
+            }
+            if let bestReps {
                 items.append(ExerciseRecord(id: "reps-\(id)", name: name, kind: "Повторения при одном весе", result: resultText(bestReps.1, type: type), date: bestReps.0.date))
             }
         }

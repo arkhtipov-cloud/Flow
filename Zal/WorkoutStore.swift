@@ -87,6 +87,24 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
     var muscleAccent: String?
     var secondaryMuscles: [MuscleTarget] = []
 
+    var searchAliases: [String] {
+        guard !isCustom else { return [] }
+        switch name {
+        case "Бабочка": return ["Бабочка (сведение рук в тренажёре)", "Pec Deck", "Пек-дек"]
+        case "Жим от груди в тренажёре": return ["Жим в грудном тренажёре"]
+        case "Сгибание рук в тренажёре": return ["Сгибание рук в тренажёре на бицепс"]
+        case "Жим на плечи в тренажёре": return ["Жим плечами в тренажёре"]
+        case "Тяга горизонтального блока": return ["Горизонтальная тяга блока"]
+        case "Разгибание рук на блоке": return ["Разгибание рук на верхнем блоке"]
+        default: return []
+        }
+    }
+
+    func matchesSearch(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || ([name] + searchAliases).contains { $0.localizedStandardContains(query) }
+    }
+
     private enum CodingKeys: String, CodingKey { case id, name, category, isCustom, illustrationID, trackingType, muscleAccent, secondaryMuscles }
 
     init(id: UUID = UUID(), name: String, category: ExerciseCategory, isCustom: Bool = true, illustrationID: String? = nil, trackingType: ExerciseTrackingType = .weightReps, muscleAccent: String? = nil, secondaryMuscles: [MuscleTarget] = []) {
@@ -240,9 +258,30 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
             guard let id = UUID(uuidString: String(format: "00000000-0000-4000-8000-%012X", index + 0x2A)) else { return nil }
             return ExerciseDefinition(id: id, name: name, category: .forearms, isCustom: false, illustrationID: illustrations[name], trackingType: .weightReps, muscleAccent: accents[name], secondaryMuscles: secondaries[name] ?? [])
         }
-        guard let cableReverseCurlID = UUID(uuidString: "00000000-0000-4000-8000-00000000002D") else { return original }
+        guard let cableReverseCurlID = UUID(uuidString: "00000000-0000-4000-8000-00000000002D"),
+              let pecDeckID = UUID(uuidString: "00000000-0000-4000-8000-00000000002E"),
+              let chestPressID = UUID(uuidString: "00000000-0000-4000-8000-00000000002F"),
+              let pulloverID = UUID(uuidString: "00000000-0000-4000-8000-000000000030"),
+              let bicepsMachineID = UUID(uuidString: "00000000-0000-4000-8000-000000000031"),
+              let shoulderPressID = UUID(uuidString: "00000000-0000-4000-8000-000000000032") else { return original }
         let cableReverseCurl = ExerciseDefinition(id: cableReverseCurlID, name: "Обратные сгибания рук в кроссовере", category: .forearms, isCustom: false, illustrationID: illustrations["Обратные сгибания рук в кроссовере"], trackingType: .weightReps, muscleAccent: accents["Обратные сгибания рук в кроссовере"], secondaryMuscles: secondaries["Обратные сгибания рук в кроссовере"] ?? [])
-        return original + [ExerciseDefinition(id: frontRaiseID, name: "Подъём гантелей перед собой", category: .shoulders, isCustom: false, illustrationID: illustrations["Подъём гантелей перед собой"], trackingType: .weightReps, muscleAccent: accents["Подъём гантелей перед собой"])] + cardioExercises + shrugs + [ExerciseDefinition(id: uprightRowID, name: "Тяга штанги к подбородку", category: .shoulders, isCustom: false, illustrationID: illustrations["Тяга штанги к подбородку"], trackingType: .weightReps, muscleAccent: accents["Тяга штанги к подбородку"], secondaryMuscles: secondaries["Тяга штанги к подбородку"] ?? [])] + forearmExercises + [cableReverseCurl]
+        let pecDeck = ExerciseDefinition(id: pecDeckID, name: "Бабочка", category: .chest,
+                                         isCustom: false, trackingType: .weightReps, muscleAccent: "Средняя часть груди")
+        let machines = [
+            ExerciseDefinition(id: chestPressID, name: "Жим от груди в тренажёре", category: .chest, isCustom: false,
+                               trackingType: .weightReps, muscleAccent: "Средняя часть груди",
+                               secondaryMuscles: secondaries["Жим штанги лёжа"] ?? []),
+            // Elbow-pad pullover: isolated shoulder extension, without elbow-flexion targets.
+            ExerciseDefinition(id: pulloverID, name: "Пуловер в тренажёре", category: .back, isCustom: false,
+                               trackingType: .weightReps, muscleAccent: "Широчайшие"),
+            ExerciseDefinition(id: bicepsMachineID, name: "Сгибание рук в тренажёре", category: .biceps, isCustom: false,
+                               trackingType: .weightReps, muscleAccent: "Бицепс",
+                               secondaryMuscles: secondaries["Подъём штанги на бицепс"] ?? []),
+            ExerciseDefinition(id: shoulderPressID, name: "Жим на плечи в тренажёре", category: .shoulders, isCustom: false,
+                               trackingType: .weightReps, muscleAccent: "Передняя дельта",
+                               secondaryMuscles: secondaries["Жим гантелей сидя"] ?? [])
+        ]
+        return original + [ExerciseDefinition(id: frontRaiseID, name: "Подъём гантелей перед собой", category: .shoulders, isCustom: false, illustrationID: illustrations["Подъём гантелей перед собой"], trackingType: .weightReps, muscleAccent: accents["Подъём гантелей перед собой"])] + cardioExercises + shrugs + [ExerciseDefinition(id: uprightRowID, name: "Тяга штанги к подбородку", category: .shoulders, isCustom: false, illustrationID: illustrations["Тяга штанги к подбородку"], trackingType: .weightReps, muscleAccent: accents["Тяга штанги к подбородку"], secondaryMuscles: secondaries["Тяга штанги к подбородку"] ?? [])] + forearmExercises + [cableReverseCurl, pecDeck] + machines
     }()
 }
 
@@ -283,6 +322,36 @@ extension SetEntry {
     }
 }
 
+enum WorkoutSetClassifier {
+    static func workingSets(_ sets: [SetEntry], type: ExerciseTrackingType) -> [SetEntry] {
+        guard type == .weightReps else { return sets }
+        let recorded = sets.enumerated().filter { $0.element.hasRecordedResult(for: type) }
+        guard let maximum = recorded.map({ $0.element.weight }).max(),
+              let firstHeavy = recorded.firstIndex(where: { $0.element.weight == maximum }),
+              firstHeavy >= 2 else { return sets }
+        let preparation = Array(recorded[..<firstHeavy])
+        let heavy = recorded[firstHeavy...].prefix { $0.element.weight == maximum }
+        guard heavy.count >= 2,
+              let minReps = heavy.map({ $0.element.repetitions }).min(),
+              let maxReps = heavy.map({ $0.element.repetitions }).max(),
+              (1...12).contains(maxReps),
+              maxReps - minReps <= 2,
+              Set(preparation.map { $0.element.weight }).count >= 2,
+              zip(preparation, preparation.dropFirst()).allSatisfy({ $0.element.weight <= $1.element.weight }) else { return sets }
+
+        // Only a clearly lighter ascending prefix is inferred as preparation.
+        // A near-working ramp, an isolated top set and all later back-off sets stay eligible.
+        let heavyScore = maximum * (1 + Double(minReps) / 30)
+        let warmupIndices = Set(preparation.filter { item in
+            let entry = item.element
+            let score = entry.weight * (1 + Double(entry.repetitions) / 30)
+            return entry.weight <= maximum * 0.75 && (maxReps...12).contains(entry.repetitions) &&
+                score.isFinite && heavyScore.isFinite && score <= heavyScore * 0.85
+        }.map(\.offset))
+        return sets.enumerated().filter { !warmupIndices.contains($0.offset) }.map(\.element)
+    }
+}
+
 struct WorkoutExercise: Identifiable, Codable, Hashable {
     var id = UUID()
     var exerciseID: UUID
@@ -290,6 +359,8 @@ struct WorkoutExercise: Identifiable, Codable, Hashable {
     var sets: [SetEntry] = [SetEntry()]
     var trackingType: ExerciseTrackingType = .weightReps
     var muscleMapSnapshot: MuscleMap?
+
+    var analysisSets: [SetEntry] { WorkoutSetClassifier.workingSets(sets, type: trackingType) }
 
     private enum CodingKeys: String, CodingKey { case id, exerciseID, name, sets, trackingType, muscleMapSnapshot }
 
@@ -329,6 +400,14 @@ struct WorkoutRecord: Identifiable, Codable, Hashable {
     var duration: TimeInterval? {
         guard let startedAt, let finishedAt else { return nil }
         return max(0, finishedAt.timeIntervalSince(startedAt))
+    }
+
+    mutating func moveExercise(_ exerciseID: UUID, to targetID: UUID) {
+        guard exerciseID != targetID,
+              let source = exercises.firstIndex(where: { $0.id == exerciseID }),
+              let target = exercises.firstIndex(where: { $0.id == targetID }) else { return }
+        let exercise = exercises.remove(at: source)
+        exercises.insert(exercise, at: target)
     }
 }
 
@@ -542,6 +621,14 @@ final class WorkoutStore: ObservableObject {
             records.append(record)
         }
         save()
+    }
+
+    func moveExercise(_ exerciseID: UUID, to targetID: UUID, in workoutID: UUID) {
+        guard var workout = records.first(where: { $0.id == workoutID }) else { return }
+        let previousOrder = workout.exercises.map(\.id)
+        workout.moveExercise(exerciseID, to: targetID)
+        guard workout.exercises.map(\.id) != previousOrder else { return }
+        upsert(workout)
     }
 
     func delete(_ record: WorkoutRecord) {
