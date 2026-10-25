@@ -58,6 +58,7 @@ struct ExerciseProgressResult: Identifiable {
     let observationPeriod: DateInterval
     let trendPeriod: DateInterval?
     let recentValues: [Double]
+    var recentObservations: [ChartObservation] = []
 
     var id: String { "\(exerciseID.uuidString)-\(metric)" }
     var hasIdenticalRecentResults: Bool {
@@ -125,6 +126,7 @@ struct MuscleAnalysisSnapshot {
     let exercises: [ExerciseProgressResult]
     let regularity: MuscleRegularityResult
     let cardio: MuscleCardioResult
+    var dataError: String? = nil
 }
 
 @MainActor enum MuscleAnalysisEngine {
@@ -149,16 +151,31 @@ struct MuscleAnalysisSnapshot {
         let date: Date
         let workoutID: UUID
         let value: Double
+        let sourceSet: SetEntry
     }
 
     static func analyze(store: WorkoutStore, period: StatsPeriod, relativeTo date: Date = .now) -> MuscleAnalysisSnapshot {
-        let maps = Dictionary(uniqueKeysWithValues: store.exercises.compactMap { exercise in
-            store.muscleMap(for: exercise.id).map { (exercise.id, $0) }
-        })
-        return analyze(workouts: store.workouts, muscleMaps: maps, period: period, relativeTo: date)
+        do {
+            let definitions = try WorkoutDataValidation.exerciseIndex(store.exercises)
+            let maps = definitions.compactMapValues { store.muscleMap(for: $0.id) }
+            var result = analyze(workouts: store.workouts, muscleMaps: maps, period: period, relativeTo: date)
+            result.dataError = result.dataError ?? store.loadError
+            return result
+        } catch {
+            var result = analyze(workouts: [], muscleMaps: [:], period: period, relativeTo: date)
+            result.dataError = error.localizedDescription
+            return result
+        }
     }
 
     static func analyze(workouts: [WorkoutRecord], muscleMaps: [UUID: MuscleMap], period: StatsPeriod, relativeTo date: Date = .now) -> MuscleAnalysisSnapshot {
+        do {
+            try WorkoutDataValidation.records(workouts)
+        } catch {
+            var result = analyze(workouts: [], muscleMaps: [:], period: period, relativeTo: date)
+            result.dataError = error.localizedDescription
+            return result
+        }
         let calendar = WorkoutStore.statisticsCalendar
         guard let full = calendar.dateInterval(of: period.calendarComponent, for: date),
               let previousDate = calendar.date(byAdding: .second, value: -1, to: full.start),
@@ -167,7 +184,7 @@ struct MuscleAnalysisSnapshot {
             return snapshot(current: PeriodData(), previous: PeriodData(), currentInterval: empty, previousInterval: empty,
                             history: [], maps: muscleMaps, calendar: calendar, asOf: date)
         }
-        // DateInterval is end-exclusive; include a result recorded exactly at `date`.
+        // Use explicit half-open bounds below; nextUp includes a result recorded exactly at `date`.
         let currentEnd = min(full.end, Date(timeIntervalSinceReferenceDate: date.timeIntervalSinceReferenceDate.nextUp))
         let elapsed = calendar.dateComponents([.day, .hour, .minute, .second], from: full.start, to: currentEnd)
         let previousEnd = currentEnd == full.end ? fullPrevious.end
@@ -255,7 +272,7 @@ struct MuscleAnalysisSnapshot {
     private static func collect(_ workouts: [WorkoutRecord], in interval: DateInterval,
                                 maps: [UUID: MuscleMap], calendar: Calendar) -> PeriodData {
         var data = PeriodData()
-        for workout in workouts where interval.contains(workout.date) {
+        for workout in workouts where workout.date >= interval.start && workout.date < interval.end {
             data.workouts.append(workout)
             let day = calendar.startOfDay(for: workout.date)
             for exercise in workout.exercises {
@@ -332,6 +349,24 @@ struct MuscleAnalysisSnapshot {
         return result
     }
 
+    static func activeWeekHistory(store: WorkoutStore, relativeTo date: Date = .now)
+        -> (weeks: [MuscleAnalysisWeek], currentStreak: Int, longestStreak: Int) {
+        let calendar = WorkoutStore.statisticsCalendar
+        let history = store.workouts.filter { $0.date <= date && containsResult($0) }
+        guard let first = history.map(\.date).min(),
+              let firstWeek = calendar.dateInterval(of: .weekOfYear, for: first) else { return ([], 0, 0) }
+        let interval = DateInterval(start: firstWeek.start,
+                                    end: Date(timeIntervalSinceReferenceDate: date.timeIntervalSinceReferenceDate.nextUp))
+        let weeks = weeklyFrequency(history, in: interval, calendar: calendar)
+        var longest = 0
+        var ongoing = 0
+        for week in weeks {
+            ongoing = week.isActive ? ongoing + 1 : 0
+            longest = max(longest, ongoing)
+        }
+        return (weeks, weekContinuity(history, asOf: date, calendar: calendar).streak, longest)
+    }
+
     private static func weekContinuity(_ history: [WorkoutRecord], asOf date: Date,
                                        calendar: Calendar) -> (streak: Int, gap: Int?, streakPeriod: DateInterval?, returnPeriod: DateInterval?) {
         guard let thisWeek = calendar.dateInterval(of: .weekOfYear, for: date),
@@ -388,14 +423,15 @@ struct MuscleAnalysisSnapshot {
             for exercise in workout.exercises {
                 names[exercise.exerciseID] = exercise.name
                 for metric in metrics(for: exercise.trackingType) {
-                    guard let value = bestValue(exercise, metric: metric) else { continue }
+                    guard let best = bestResult(exercise, metric: metric) else { continue }
+                    let value = best.value
                     var values = sessions[exercise.exerciseID]?[metric] ?? []
                     if let index = values.firstIndex(where: { $0.workoutID == workout.id }) {
                         if value > values[index].value {
-                            values[index] = Performance(date: workout.date, workoutID: workout.id, value: value)
+                            values[index] = Performance(date: workout.date, workoutID: workout.id, value: value, sourceSet: best.set)
                         }
                     } else {
-                        values.append(Performance(date: workout.date, workoutID: workout.id, value: value))
+                        values.append(Performance(date: workout.date, workoutID: workout.id, value: value, sourceSet: best.set))
                     }
                     sessions[exercise.exerciseID, default: [:]][metric] = values
                 }
@@ -404,7 +440,7 @@ struct MuscleAnalysisSnapshot {
         return sessions.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { id in
             (sessions[id] ?? [:]).keys.sorted { String(describing: $0) < String(describing: $1) }.compactMap { metric -> ExerciseProgressResult? in
                 let all = (sessions[id]?[metric] ?? []).sorted { $0.date < $1.date }
-                guard let latestIndex = all.lastIndex(where: { interval.contains($0.date) }) else { return nil }
+                guard let latestIndex = all.lastIndex(where: { $0.date >= interval.start && $0.date < interval.end }) else { return nil }
                 let relevant = Array(all[...latestIndex])
                 let latest = relevant.last?.value
                 let previous = relevant.dropLast().last?.value
@@ -420,8 +456,8 @@ struct MuscleAnalysisSnapshot {
                     isRecord = canCompare && relevant.last!.date >= recordEligibleDay && latest > previousBest
                 }
                 else { isRecord = false }
-                let currentValues = all.filter { interval.contains($0.date) }.map(\.value)
-                let priorValues = all.filter { previousInterval.contains($0.date) }.map(\.value)
+                let currentValues = all.filter { $0.date >= interval.start && $0.date < interval.end }.map(\.value)
+                let priorValues = all.filter { $0.date >= previousInterval.start && $0.date < previousInterval.end }.map(\.value)
                 let currentChange = currentValues.count >= 3 ? currentValues.last! - currentValues.first! : nil
                 let priorChange = priorValues.count >= 3 ? priorValues.last! - priorValues.first! : nil
                 let observationPeriod = DateInterval(start: relevant.first!.date,
@@ -434,7 +470,10 @@ struct MuscleAnalysisSnapshot {
                                               trend: trend, isPersonalRecord: isRecord,
                                               currentPeriodChange: currentChange, previousPeriodChange: priorChange,
                                               observationPeriod: observationPeriod, trendPeriod: trendPeriod,
-                                              recentValues: recentValues)
+                                              recentValues: recentValues,
+                                              recentObservations: relevant.suffix(5).map {
+                                                  ChartObservation(id: $0.workoutID, date: $0.date, value: $0.value, sourceSet: $0.sourceSet)
+                                              })
             }
         }
     }
@@ -467,22 +506,27 @@ struct MuscleAnalysisSnapshot {
         }
     }
 
-    private static func bestValue(_ exercise: WorkoutExercise, metric: ExerciseResultMetric) -> Double? {
-        let values: [Double] = exercise.analysisSets.compactMap { entry in
+    private static func bestResult(_ exercise: WorkoutExercise, metric: ExerciseResultMetric) -> (value: Double, set: SetEntry)? {
+        let values: [(value: Double, set: SetEntry)] = exercise.analysisSets.compactMap { entry in
+            let value: Double
             switch (exercise.trackingType, metric) {
             case (.weightReps, .estimatedOneRepMax):
                 guard entry.hasRecordedResult(for: .weightReps), (1...12).contains(entry.repetitions) else { return nil }
-                return entry.weight * (1 + Double(entry.repetitions) / 30)
-            case (.reps, .repetitions): return entry.repetitions > 0 ? Double(entry.repetitions) : nil
+                value = entry.weight * (1 + Double(entry.repetitions) / 30)
+            case (.reps, .repetitions):
+                guard entry.repetitions > 0 else { return nil }
+                value = Double(entry.repetitions)
             case (.duration, .durationSeconds), (.cardio, .cardioDurationSeconds):
-                return entry.hasRecordedResult(for: exercise.trackingType) ? Double(entry.durationSeconds) : nil
+                guard entry.hasRecordedResult(for: exercise.trackingType) else { return nil }
+                value = Double(entry.durationSeconds)
             case (.cardio, .cardioDistanceKilometers):
                 guard entry.hasRecordedResult(for: .cardio), let distance = entry.distanceKilometers,
                       distance.isFinite, distance > 0 else { return nil }
-                return distance
+                value = distance
             default: return nil
             }
+            return (value, entry)
         }
-        return values.max()
+        return values.max { $0.value < $1.value }
     }
 }

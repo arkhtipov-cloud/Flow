@@ -77,6 +77,7 @@ struct WorkoutEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var record: WorkoutRecord
     @State private var showingExercisePicker = false
+    @State private var hasInvalidSetInput = false
     @FocusState private var focusedInput: SetInputField?
 
     init(record: WorkoutRecord? = nil, isTemplate: Bool = false) {
@@ -148,6 +149,7 @@ struct WorkoutEditorView: View {
         .tint(PageStyle.ink)
         .navigationTitle(record.isTemplate ? "Шаблон" : "Тренировка")
         .navigationBarTitleDisplayMode(.inline)
+        .onPreferenceChange(SetInputErrorPreferenceKey.self) { hasInvalidSetInput = $0 }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -159,11 +161,10 @@ struct WorkoutEditorView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Сохранить") {
                     record.title = record.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    store.upsert(record)
-                    dismiss()
+                    if store.upsert(record) { dismiss() }
                 }
                 .fontWeight(.semibold)
-                .disabled(record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(hasInvalidSetInput || record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .sheet(isPresented: $showingExercisePicker) {
@@ -202,6 +203,13 @@ private struct WorkoutCardFieldStyle: ViewModifier {
     }
 }
 
+private struct SetInputErrorPreferenceKey: PreferenceKey {
+    static var defaultValue: Bool { false }
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = value || nextValue()
+    }
+}
+
 private struct SetInputRow: View {
     @Binding var entry: SetEntry
     let number: Int
@@ -214,9 +222,10 @@ private struct SetInputRow: View {
     @State private var minutesText = ""
     @State private var secondsText = ""
     @State private var distanceText = ""
+    @State private var inputErrors: [SetInputField: String] = [:]
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 4) {
             if trackingType == .cardio {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Время")
@@ -286,6 +295,13 @@ private struct SetInputRow: View {
                     }
                 }
             }
+            if let error = inputErrors.values.sorted().first {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Ошибка ввода: \(error)")
+            }
         }
         .onAppear {
             weightText = entry.weight == 0 ? "" : entry.weight.formatted()
@@ -294,29 +310,37 @@ private struct SetInputRow: View {
             secondsText = entry.durationSeconds == 0 ? "" : String(format: "%02d", entry.durationSeconds % 60)
             distanceText = entry.distanceKilometers?.formatted() ?? ""
         }
+        .preference(key: SetInputErrorPreferenceKey.self, value: !inputErrors.isEmpty)
         .onChange(of: weightText) { _, newValue in
-            let normalized = newValue.replacingOccurrences(of: ",", with: ".")
-            if let value = Double(normalized), value >= 0 { entry.weight = value }
-            else if newValue.isEmpty { entry.weight = 0 }
+            updateEntry(field: .weight(entry.id)) { $0.weight = try SetInputValidation.decimal(newValue) }
         }
         .onChange(of: repetitionsText) { _, newValue in
-            if let value = Int(newValue), value >= 0 { entry.repetitions = value }
-            else if newValue.isEmpty { entry.repetitions = 0 }
+            updateEntry(field: .repetitions(entry.id)) { $0.repetitions = try SetInputValidation.integer(newValue) }
         }
         .onChange(of: minutesText) { _, _ in updateDuration() }
         .onChange(of: secondsText) { _, _ in updateDuration() }
         .onChange(of: distanceText) { _, newValue in
-            let normalized = newValue.replacingOccurrences(of: ",", with: ".")
-            if let value = Double(normalized), value >= 0 { entry.distanceKilometers = value }
-            else if newValue.isEmpty { entry.distanceKilometers = nil }
+            updateEntry(field: .distance(entry.id)) {
+                $0.distanceKilometers = newValue.isEmpty ? nil : try SetInputValidation.decimal(newValue)
+            }
         }
     }
 
     private func updateDuration() {
-        let minutes = Int(minutesText) ?? 0
-        let seconds = Int(secondsText) ?? 0
-        guard minutes >= 0, (0...59).contains(seconds) else { return }
-        entry.durationSeconds = minutes * 60 + seconds
+        updateEntry(field: .minutes(entry.id)) {
+            $0.durationSeconds = try SetInputValidation.duration(minutes: minutesText, seconds: secondsText)
+        }
+    }
+
+    private func updateEntry(field: SetInputField, change: (inout SetEntry) throws -> Void) {
+        do {
+            var updated = entry
+            try change(&updated)
+            entry = updated
+            inputErrors[field] = nil
+        } catch {
+            inputErrors[field] = error.localizedDescription
+        }
     }
 }
 
@@ -357,15 +381,15 @@ struct ExerciseLibraryView: View {
     private var standardGroups: [(String?, [String])] {
         switch selectedCategory {
         case .chest:
-            return [("СРЕДНЯЯ ЧАСТЬ ГРУДИ", ["Жим штанги лёжа", "Жим гантелей лёжа", "Сведение рук в кроссовере", "Бабочка", "Жим от груди в тренажёре"]), ("ВЕРХ ГРУДИ", ["Жим гантелей на наклонной скамье"]), ("НИЗ ГРУДИ", ["Отжимания на брусьях"])]
+            return [("СРЕДНЯЯ ЧАСТЬ ГРУДИ", ["Жим штанги лёжа", "Жим гантелей лёжа", "Сведение рук в кроссовере", "Бабочка"]), ("ВЕРХ ГРУДИ", ["Жим гантелей на наклонной скамье"]), ("НИЗ ГРУДИ", ["Отжимания на брусьях"])]
         case .back:
-            return [("ШИРОЧАЙШИЕ", ["Подтягивания", "Подтягивания с весом", "Тяга верхнего блока", "Тяга гантели одной рукой", "Пуловер в тренажёре"]), ("СРЕДНЯЯ ЧАСТЬ СПИНЫ", ["Тяга горизонтального блока", "Тяга штанги к поясу"]), ("ТРАПЕЦИИ", ["Шраги с гантелями", "Шраги со штангой"])]
+            return [("ШИРОЧАЙШИЕ", ["Подтягивания", "Подтягивания с весом", "Тяга верхнего блока", "Тяга гантели одной рукой"]), ("СРЕДНЯЯ ЧАСТЬ СПИНЫ", ["Тяга горизонтального блока", "Тяга штанги к поясу"]), ("ТРАПЕЦИИ", ["Шраги с гантелями", "Шраги со штангой"])]
         case .legs:
             return [("КВАДРИЦЕПС", ["Приседания со штангой", "Жим ногами", "Разгибание ног"]), ("ЯГОДИЧНЫЕ", ["Румынская тяга"]), ("ЗАДНЯЯ ПОВЕРХНОСТЬ БЕДРА", ["Сгибание ног"]), ("ИКРОНОЖНЫЕ", ["Подъём на носки"])]
         case .shoulders:
-            return [("ПЕРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей перед собой", "Жим гантелей сидя", "Жим штанги стоя", "Жим на плечи в тренажёре"]), ("СРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей в стороны", "Тяга штанги к подбородку"]), ("ЗАДНЯЯ ДЕЛЬТА", ["Разведение гантелей в наклоне"])]
+            return [("ПЕРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей перед собой", "Жим гантелей сидя", "Жим штанги стоя"]), ("СРЕДНЯЯ ДЕЛЬТА", ["Подъём гантелей в стороны", "Тяга штанги к подбородку"]), ("ЗАДНЯЯ ДЕЛЬТА", ["Разведение гантелей в наклоне"])]
         case .biceps:
-            return [("БИЦЕПС", ["Подъём штанги на бицепс", "Подъём гантелей на бицепс", "Сгибание рук в тренажёре"]), ("БРАХИАЛИС", ["Молотковые сгибания"])]
+            return [("БИЦЕПС", ["Подъём штанги на бицепс", "Подъём гантелей на бицепс"]), ("БРАХИАЛИС", ["Молотковые сгибания"])]
         case .triceps:
             return [(nil, ["Разгибание рук на блоке", "Французский жим", "Разгибание руки из-за головы"])]
         case .forearms:
@@ -379,11 +403,11 @@ struct ExerciseLibraryView: View {
 
     private var visibleGroups: [LibraryGroup] {
         if isSearchPresented || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let matches = store.exercises.filter { $0.matchesSearch(searchText) }
+            let matches = store.exercises.filter { $0.isAvailableInLibrary && $0.matchesSearch(searchText) }
                 .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             return matches.isEmpty ? [] : [LibraryGroup(id: 0, title: nil, exercises: matches)]
         }
-        let available = store.exercises.filter { $0.category == selectedCategory }
+        let available = store.exercises.filter { $0.isAvailableInLibrary && $0.category == selectedCategory }
         let groups = standardGroups.enumerated().compactMap { index, definition -> LibraryGroup? in
             let standard = definition.1.compactMap { name in
                 available.first { !$0.isCustom && $0.name == name }
@@ -578,9 +602,9 @@ private struct ExerciseLibraryIllustration: View, Equatable {
 struct WorkoutHistoryView: View {
     @EnvironmentObject private var store: WorkoutStore
 
-    private var months: [(Date, [WorkoutRecord])] {
+    private func months(in workouts: [WorkoutRecord]) -> [(Date, [WorkoutRecord])] {
         let calendar = Calendar.current
-        let grouped = Dictionary(grouping: store.workouts) {
+        let grouped = Dictionary(grouping: workouts) {
             calendar.dateInterval(of: .month, for: $0.date)?.start ?? calendar.startOfDay(for: $0.date)
         }
         return grouped.keys.sorted(by: >).map { month in
@@ -589,7 +613,10 @@ struct WorkoutHistoryView: View {
     }
 
     var body: some View {
-        List {
+        let history = store.workouts
+        let months = months(in: history)
+        let recordCounts = HistorySummary.recordCounts(in: history)
+        return List {
             if months.isEmpty {
                 Text("Сохранённых тренировок пока нет")
                     .foregroundStyle(PageStyle.muted)
@@ -611,7 +638,7 @@ struct WorkoutHistoryView: View {
                                 Text("\(workout.exercises.count) упр. · \(sets) подх." + (cardio > 0 ? " · \(cardio) кардио" : ""))
                                     .font(.system(size: 13))
                                     .foregroundStyle(PageStyle.muted)
-                                let records = HistorySummary.recordCount(for: workout, in: store.workouts)
+                                let records = recordCounts[workout.id, default: 0]
                                 if records > 0 {
                                     Label("\(records) личных рекордов", systemImage: "trophy")
                                         .font(.system(size: 12, weight: .medium))
@@ -692,19 +719,35 @@ private enum HistorySummary {
     }
 
     static func score(_ exercise: WorkoutExercise, distance: Bool = false) -> Double? {
-        let values: [Double] = exercise.analysisSets.compactMap { entry in
+        bestResult(exercise, distance: distance)?.value
+    }
+
+    static func bestResult(_ exercise: WorkoutExercise, distance: Bool = false) -> (value: Double, set: SetEntry)? {
+        let values: [(value: Double, set: SetEntry)] = exercise.analysisSets.compactMap { entry in
+            let value: Double
             switch exercise.trackingType {
             case .weightReps:
                 guard entry.hasRecordedResult(for: .weightReps), (1...12).contains(entry.repetitions) else { return nil }
-                return entry.weight * (1 + Double(entry.repetitions) / 30)
-            case .reps: return entry.repetitions > 0 ? Double(entry.repetitions) : nil
-            case .duration: return entry.durationSeconds > 0 ? Double(entry.durationSeconds) : nil
+                value = entry.weight * (1 + Double(entry.repetitions) / 30)
+            case .reps:
+                guard entry.repetitions > 0 else { return nil }
+                value = Double(entry.repetitions)
+            case .duration:
+                guard entry.durationSeconds > 0 else { return nil }
+                value = Double(entry.durationSeconds)
             case .cardio:
-                if distance { return entry.hasRecordedResult(for: .cardio) ? entry.distanceKilometers.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } : nil }
-                return entry.durationSeconds > 0 ? Double(entry.durationSeconds) : nil
+                if distance {
+                    guard entry.hasRecordedResult(for: .cardio), let kilometers = entry.distanceKilometers,
+                          kilometers.isFinite, kilometers > 0 else { return nil }
+                    value = kilometers
+                } else {
+                    guard entry.durationSeconds > 0 else { return nil }
+                    value = Double(entry.durationSeconds)
+                }
             }
+            return (value, entry)
         }
-        return values.max()
+        return values.max { $0.value < $1.value }
     }
 
     static func metricName(_ type: ExerciseTrackingType, distance: Bool = false) -> String {
@@ -736,23 +779,12 @@ private enum HistorySummary {
     }
 
     @MainActor static func recordCount(for workout: WorkoutRecord, in workouts: [WorkoutRecord]) -> Int {
-        let calendar = WorkoutStore.statisticsCalendar
-        guard let firstDate = workouts.filter({ $0.exercises.contains { exercise in
-            exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
-        } }).map(\.date).min(),
-              let eligible = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: firstDate)),
-              workout.date >= eligible else { return 0 }
-        let earlier = workouts.filter { !$0.isTemplate && $0.date < workout.date }
-        return workout.exercises.reduce(0) { total, exercise in
-            guard exercise.trackingType != .cardio else { return total }
-            let prior = earlier.flatMap(\.exercises).filter { $0.exerciseID == exercise.exerciseID && $0.trackingType == exercise.trackingType }
-            guard !prior.isEmpty else { return total }
-            let dimensions = exercise.trackingType == .cardio ? [false, true] : [false]
-            return total + dimensions.filter { distance in
-                guard let current = score(exercise, distance: distance),
-                      let previous = prior.compactMap({ score($0, distance: distance) }).max() else { return false }
-                return current > previous
-            }.count
+        recordCounts(in: workouts)[workout.id, default: 0]
+    }
+
+    @MainActor static func recordCounts(in workouts: [WorkoutRecord]) -> [UUID: Int] {
+        WorkoutStore.historyRecordCounts(in: workouts) { exercise, distance in
+            score(exercise, distance: distance)
         }
     }
 }
@@ -856,29 +888,133 @@ private struct WorkoutHistoryDetailView: View {
     }
 }
 
+private struct InteractiveProgressChart: View {
+    let points: [ChartObservation]
+    let metric: String
+    let valueText: (Double) -> String
+    var indexed = false
+    var height: CGFloat = 220
+    var showsSourceWeight = false
+    @State private var selectedID: UUID?
+    @GestureState private var isInspecting = false
+
+    private var selected: ChartObservation? { points.first { $0.id == selectedID } }
+
+    private func detail(_ point: ChartObservation) -> String {
+        var text = "\(point.date.formatted(date: .abbreviated, time: .omitted)) · \(metric): \(valueText(point.value))"
+        if showsSourceWeight, let set = point.sourceSet {
+            text += " · \(set.weight.formatted()) кг × \(set.repetitions) повт."
+        }
+        return text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Reserve the readout's space so inspection does not move the plot under the finger.
+            VStack(alignment: .leading, spacing: 1) {
+                if let point = selected ?? points.first {
+                    Text(point.date.formatted(date: .abbreviated, time: .omitted))
+                    Text("\(metric): \(valueText(point.value))")
+                    if showsSourceWeight, let set = point.sourceSet {
+                        Text("\(set.weight.formatted()) кг × \(set.repetitions) повт.")
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(PageStyle.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .opacity(selected == nil ? 0 : 1)
+            .accessibilityHidden(selected == nil)
+            Chart {
+                if let selected, let index = points.firstIndex(where: { $0.id == selected.id }) {
+                    // Use the same X value and scale as the selected PointMark.
+                    if indexed {
+                        RuleMark(x: .value("Выполнение", index + 1))
+                            .foregroundStyle(PageStyle.muted)
+                            .lineStyle(StrokeStyle(lineWidth: 0.7))
+                    } else {
+                        RuleMark(x: .value("Дата", selected.date))
+                            .foregroundStyle(PageStyle.muted)
+                            .lineStyle(StrokeStyle(lineWidth: 0.7))
+                    }
+                }
+                ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
+                    if indexed {
+                        LineMark(x: .value("Выполнение", index + 1), y: .value(metric, point.value))
+                            .foregroundStyle(PageStyle.ink)
+                        PointMark(x: .value("Выполнение", index + 1), y: .value(metric, point.value))
+                            .foregroundStyle(PageStyle.ink)
+                            .symbolSize(selectedID == point.id ? 65 : 18)
+                    } else {
+                        LineMark(x: .value("Дата", point.date), y: .value(metric, point.value))
+                            .foregroundStyle(PageStyle.ink)
+                        PointMark(x: .value("Дата", point.date), y: .value(metric, point.value))
+                            .foregroundStyle(PageStyle.ink)
+                            .symbolSize(selectedID == point.id ? 65 : 18)
+                    }
+                }
+            }
+            .chartXAxis(indexed ? .hidden : .automatic)
+            .chartYAxis(indexed ? .hidden : .automatic)
+            .frame(height: height)
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    let frame = proxy.plotFrame.map { geometry[$0] }
+                    let positions = points.enumerated().map { index, point -> Double in
+                        let x = indexed ? proxy.position(forX: index + 1) : proxy.position(forX: point.date)
+                        return x.map(Double.init) ?? .nan
+                    }
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 0)
+                                .simultaneously(with: LongPressGesture(minimumDuration: 0.25, maximumDistance: 12))
+                                .updating($isInspecting) { value, state, _ in
+                                    state = value.second == true
+                                }
+                                .onChanged { value in
+                                    guard value.second == true, let drag = value.first, let frame else { return }
+                                    if let index = ChartPointSelection.nearestIndex(
+                                        to: Double(drag.location.x - frame.minX), positions: positions) {
+                                        let id = points[index].id
+                                        if selectedID != id { selectedID = id }
+                                    }
+                                }
+                                .onEnded { _ in selectedID = nil }
+                        )
+                }
+            }
+            .accessibilityRepresentation {
+                VStack {
+                    ForEach(points) { point in Text(detail(point)) }
+                }
+            }
+        }
+        .onChange(of: isInspecting) { _, active in if !active { selectedID = nil } }
+        .onChange(of: points) { _, _ in selectedID = nil }
+        .onChange(of: metric) { _, _ in selectedID = nil }
+        .onChange(of: indexed) { _, _ in selectedID = nil }
+    }
+}
+
 private struct ExerciseHistoryChartView: View {
     @EnvironmentObject private var store: WorkoutStore
     let exerciseID: UUID
     let selectedDate: Date
     @State private var showDistance = false
 
-    private struct Point: Identifiable {
-        let id: UUID
-        let date: Date
-        let value: Double
-    }
-
     private var exercise: WorkoutExercise? {
         store.workouts.filter { $0.date <= selectedDate }.sorted { $0.date > $1.date }
             .flatMap(\.exercises).first { $0.exerciseID == exerciseID }
     }
 
-    private var points: [Point] {
-        store.workouts.filter { $0.date <= selectedDate }.sorted { $0.date < $1.date }.compactMap { workout in
-            let scores = workout.exercises.filter { $0.exerciseID == exerciseID && $0.trackingType == exercise?.trackingType }
-                .compactMap { HistorySummary.score($0, distance: showDistance) }
-            guard let best = scores.max() else { return nil }
-            return Point(id: workout.id, date: workout.date, value: best)
+    private var points: [ChartObservation] {
+        let type = exercise?.trackingType
+        return store.workouts.filter { $0.date <= selectedDate }.sorted { $0.date < $1.date }.compactMap { workout in
+            let scores = workout.exercises.filter { $0.exerciseID == exerciseID && $0.trackingType == type }
+                .compactMap { HistorySummary.bestResult($0, distance: showDistance) }
+            guard let best = scores.max(by: { $0.value < $1.value }) else { return nil }
+            return ChartObservation(id: workout.id, date: workout.date, value: best.value, sourceSet: best.set)
         }
     }
 
@@ -888,6 +1024,7 @@ private struct ExerciseHistoryChartView: View {
     }
 
     var body: some View {
+        let observations = points
         ScrollView {
             if let exercise {
                 VStack(alignment: .leading, spacing: 20) {
@@ -901,24 +1038,22 @@ private struct ExerciseHistoryChartView: View {
                     }
                     Text(HistorySummary.metricName(exercise.trackingType, distance: showDistance))
                         .font(.system(size: 14)).foregroundStyle(PageStyle.muted)
-                    if points.count >= 2 {
-                        Chart(points) { point in
-                            LineMark(x: .value("Дата", point.date), y: .value("Результат", point.value))
-                                .foregroundStyle(PageStyle.ink)
-                            PointMark(x: .value("Дата", point.date), y: .value("Результат", point.value))
-                                .foregroundStyle(PageStyle.ink)
-                        }
-                        .frame(height: 220)
-                    } else if let point = points.first {
+                    if !observations.isEmpty {
+                        InteractiveProgressChart(points: observations,
+                            metric: HistorySummary.metricName(exercise.trackingType, distance: showDistance),
+                            valueText: { HistorySummary.metricText($0, type: exercise.trackingType, distance: showDistance) },
+                            showsSourceWeight: exercise.trackingType == .weightReps)
+                    }
+                    if observations.count == 1, let point = observations.first {
                         Text(HistorySummary.metricText(point.value, type: exercise.trackingType, distance: showDistance))
                             .font(.system(size: 22, weight: .semibold))
                         Text("Недостаточно данных для динамики")
                             .foregroundStyle(PageStyle.muted)
-                    } else {
+                    } else if observations.isEmpty {
                         Text("Результаты пока не записаны")
                             .foregroundStyle(PageStyle.muted)
                     }
-                    if points.count >= 2 {
+                    if observations.count >= 2 {
                         Text(showDistance ? "км" : exercise.trackingType == .weightReps ? "кг" : exercise.trackingType == .reps ? "повт." : "сек")
                             .font(.system(size: 12)).foregroundStyle(PageStyle.muted)
                     }
@@ -926,7 +1061,8 @@ private struct ExerciseHistoryChartView: View {
                 .padding(20)
             }
         }
-        .background(PageStyle.canvas)
+        .frame(maxWidth: .infinity)
+        .background(PageStyle.canvas.ignoresSafeArea())
         .foregroundStyle(PageStyle.ink)
         .navigationTitle("Прогресс")
         .navigationBarTitleDisplayMode(.inline)
@@ -1321,7 +1457,7 @@ struct WorkoutsTabView: View {
                                 if var workout = selectedWorkouts.last {
                                     let text = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                                     workout.note = text.isEmpty ? nil : text
-                                    store.upsert(workout)
+                                    guard store.upsert(workout) else { return }
                                 }
                                 showingNoteEditor = false
                             }
@@ -1561,24 +1697,10 @@ struct WorkoutsTabView: View {
 
 }
 
-private enum InsightEvidenceSelection: Identifiable {
-    case insight(PersonalInsight, MuscleAnalysisSnapshot)
-    case recommendation(TrainingRecommendation)
-
-    var id: String {
-        switch self {
-        case .insight(let insight, _): "insight-\(insight.id)"
-        case .recommendation(let recommendation): "recommendation-\(recommendation.id)"
-        }
-    }
-}
-
 struct InsightsView: View {
     @EnvironmentObject private var store: WorkoutStore
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var period: StatsPeriod = .month
-    @State private var selectedEvidence: InsightEvidenceSelection?
-    @State private var showingActiveWeeks = false
+    @State private var selectedRecommendation: TrainingRecommendation?
 
     private var analysis: MuscleAnalysisSnapshot {
         MuscleAnalysisEngine.analyze(store: store, period: period)
@@ -1586,16 +1708,12 @@ struct InsightsView: View {
 
     var body: some View {
         let snapshot = analysis
-        let report = InsightsEngine.personalInsights(from: snapshot)
-        let progressInsight = report.insights.first { $0.category == .progress || $0.category == .achievement }
-        let visibleInsights = report.insights.filter { $0.id == report.insights.first?.id || $0.id == progressInsight?.id }
         let recommendations = RecommendationEngine.recommendations(
             analysis: snapshot,
-            insights: PersonalInsightsResult(readiness: report.readiness,
-                                             observationCount: report.observationCount,
-                                             insights: visibleInsights))
-        let hasInsight = report.readiness != .collecting && report.readiness != .insufficientData && !report.insights.isEmpty
-        let hasAnalysis = report.readiness == .preliminary || report.readiness == .detailed
+            insights: PersonalInsightsResult(readiness: snapshot.readiness,
+                                             observationCount: snapshot.observationCount,
+                                             insights: []))
+        let hasAnalysis = snapshot.readiness == .preliminary || snapshot.readiness == .detailed
         return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1610,7 +1728,11 @@ struct InsightsView: View {
                         .foregroundStyle(PageStyle.muted)
                 }
 
-                heroCard(snapshot: snapshot, featured: hasInsight ? report.insights.first : nil)
+                HStack(spacing: 10) {
+                    summaryValue(snapshot.regularity.workoutCount, title: "Тренировки")
+                    summaryValue(snapshot.regularity.consecutiveActiveWeeks, title: "Недели подряд")
+                        .accessibilityHint("Текущая серия активных недель за всю историю")
+                }
 
                 Text("Анализ тренировок")
                     .font(.headline)
@@ -1619,8 +1741,13 @@ struct InsightsView: View {
                     NavigationLink {
                         MuscleStructureView(period: period)
                     } label: {
-                        detailCard(title: "Мышечная структура", symbol: "figure.strengthtraining.traditional",
-                                   subtitle: muscleSubtitle(snapshot: snapshot, hasAnalysis: hasAnalysis))
+                        detailCard(title: "Распределение подходов", symbol: "figure.strengthtraining.traditional",
+                                   subtitle: snapshot.groups.contains { $0.directSets > 0 }
+                                       ? ""
+                                       : "Пока нет рабочих подходов",
+                                   distribution: Array(snapshot.groups.filter { $0.directSets > 0 }
+                                       .sorted { $0.directSets > $1.directSets }.prefix(3)),
+                                   distributionPeriod: snapshot.period)
                     }
                     .buttonStyle(.plain)
                     NavigationLink {
@@ -1639,7 +1766,7 @@ struct InsightsView: View {
                         .padding(.top, 4)
                     ForEach(recommendations) { recommendation in
                         Button {
-                            selectedEvidence = .recommendation(recommendation)
+                            selectedRecommendation = recommendation
                         } label: {
                             detailCard(title: recommendation.title, symbol: "lightbulb",
                                        subtitle: recommendation.explanation)
@@ -1657,125 +1784,59 @@ struct InsightsView: View {
         .foregroundStyle(PageStyle.ink)
         .navigationTitle("Инсайты")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $selectedEvidence) { selection in
-            switch selection {
-            case .insight(let insight, let snapshot):
-                RecommendationDetailView(insight: insight, analysis: snapshot, period: period)
-            case .recommendation(let recommendation):
-                RecommendationDetailView(recommendation: recommendation, period: period)
-            }
-        }
-        .sheet(isPresented: $showingActiveWeeks) {
-            ActiveWeeksSheet(currentStreak: snapshot.regularity.consecutiveActiveWeeks)
+        .sheet(item: $selectedRecommendation) { recommendation in
+            RecommendationDetailView(recommendation: recommendation, period: period)
         }
     }
 
-    private func heroCard(snapshot: MuscleAnalysisSnapshot, featured: PersonalInsight?) -> some View {
-        let metricsLayout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(featured?.title ?? (snapshot.readiness == .preliminary || snapshot.readiness == .detailed
-                    ? "Пока нет подтверждённых наблюдений" : snapshot.readiness == .insufficientData
-                    ? "Нужно больше тренировочных дней" : "Собираем историю тренировок"))
-                    .font(.title3.weight(.bold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let featured {
-                    Button("Подробнее") {
-                        selectedEvidence = .insight(featured, snapshot)
-                    }
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(PageStyle.muted)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(ThemePalette.soft, in: Capsule())
-                } else if !dynamicTypeSize.isAccessibilitySize {
-                    Text(readinessTitle(snapshot.readiness))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(PageStyle.muted)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(ThemePalette.soft, in: Capsule())
-                }
-            }
-            Text(featured?.explanation ?? (snapshot.readiness == .preliminary || snapshot.readiness == .detailed
-                ? "Для персональных выводов пока не хватает сопоставимых результатов."
-                : snapshot.readiness == .insufficientData
-                ? "История уже достаточна по времени, но в выбранном периоде нужны результаты минимум за два тренировочных дня."
-                : snapshot.observationCount == 0 && snapshot.historyAgeDays == 0
-                ? "Запишите первую тренировку с результатами, чтобы начать собирать историю."
-                : "Первые наблюдения доступны после семи календарных дней истории и тренировок в разные дни."))
-                .font(.footnote)
-                .foregroundStyle(PageStyle.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            metricsLayout {
-                metricCard(value: "\(snapshot.regularity.workoutCount)", title: "Тренировки", symbol: "dumbbell")
-                metricCard(value: snapshot.historyAgeDays == 0 && snapshot.observationCount == 0 ? "—" : "\(snapshot.historyAgeDays)", title: "Дней с первой записи", symbol: "calendar")
-                Button { showingActiveWeeks = true } label: {
-                    metricCard(value: "\(snapshot.regularity.consecutiveActiveWeeks)", title: "Серия недель", symbol: "chart.bar")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Серия активных недель: \(snapshot.regularity.consecutiveActiveWeeks). Подробнее")
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 27))
-        .shadow(color: .black.opacity(0.055), radius: 19, y: 8)
-        .shadow(color: .black.opacity(0.025), radius: 3, y: 1)
-    }
-
-    private func readinessTitle(_ readiness: MuscleAnalysisReadiness) -> String {
-        switch readiness {
-        case .collecting: "Сбор истории"
-        case .insufficientData: "Мало записей"
-        case .preliminary: "Предварительно"
-        case .detailed: "Подробно"
-        }
-    }
-
-    private func metricCard(value: String, title: String, symbol: String) -> some View {
+    private func summaryValue(_ value: Int, title: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value)
-                    .font(.title3.weight(.semibold))
-                    .monospacedDigit()
-                Spacer(minLength: 0)
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(PageStyle.muted)
-            }
+            Text(value.formatted())
+                .font(.title2.weight(.semibold))
+                .monospacedDigit()
             Text(title)
-                .font(.caption2.weight(.medium))
+                .font(.caption)
+                .foregroundStyle(PageStyle.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, minHeight: 53, alignment: .topLeading)
-        .padding(8)
-        .background(ThemePalette.raised, in: RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.035), radius: 7, y: 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .combine)
     }
 
-    private func detailCard(title: String, symbol: String, subtitle: String) -> some View {
-        HStack(spacing: 11) {
-            Image(systemName: symbol)
-                .font(.system(size: 19, weight: .regular))
-                .frame(width: 46, height: 46)
-                .background(ThemePalette.soft, in: RoundedRectangle(cornerRadius: 14))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(PageStyle.ink)
-                Text(subtitle)
-                    .font(.footnote)
+    private func detailCard(title: String, symbol: String, subtitle: String,
+                            distribution: [MuscleActivityResult] = [], distributionPeriod: DateInterval? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 11) {
+                Image(systemName: symbol)
+                    .font(.system(size: 19, weight: .regular))
+                    .frame(width: 46, height: 46)
+                    .background(ThemePalette.soft, in: RoundedRectangle(cornerRadius: 14))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(PageStyle.ink)
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.footnote)
+                            .foregroundStyle(PageStyle.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(PageStyle.muted)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(PageStyle.muted)
+            if !distribution.isEmpty, let distributionPeriod {
+                let maximum = distribution.map(\.directSets).max() ?? 1
+                VStack(spacing: 10) {
+                    ForEach(distribution) { group in
+                        MuscleSetBar(group: group, maximum: maximum, period: distributionPeriod)
+                    }
+                }
+            }
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1784,151 +1845,20 @@ struct InsightsView: View {
         .contentShape(RoundedRectangle(cornerRadius: 20))
     }
 
-    private func muscleSubtitle(snapshot: MuscleAnalysisSnapshot, hasAnalysis: Bool) -> String {
-        guard hasAnalysis else { return "Группы мышц и подходы" }
-        let groups = snapshot.groups.filter { $0.directSets > 0 }
-        guard let leading = groups.max(by: { $0.directSets < $1.directSets }) else {
-            return "Пока нет записанных силовых подходов за период"
-        }
-        return "Больше всего прямых подходов: \(leading.target.category.rawValue) — \(leading.directSets)"
-    }
-
     private func periodLabel(_ interval: DateInterval) -> String {
         "\(interval.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(interval).formatted(date: .abbreviated, time: .omitted))"
-    }
-}
-
-private struct ActiveWeeksSheet: View {
-    @EnvironmentObject private var store: WorkoutStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedWeek: Date?
-    let currentStreak: Int
-
-    private var calendar: Calendar { WorkoutStore.statisticsCalendar }
-
-    private var weeks: [MuscleAnalysisWeek] {
-        let workouts = store.workouts.filter { workout in
-            workout.date <= .now && workout.exercises.contains { exercise in
-                exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
-            }
-        }
-        guard let first = workouts.map(\.date).min(),
-              let firstWeek = calendar.dateInterval(of: .weekOfYear, for: first),
-              let currentWeek = calendar.dateInterval(of: .weekOfYear, for: .now) else { return [] }
-        var result: [MuscleAnalysisWeek] = []
-        var start = firstWeek.start
-        while start <= currentWeek.start {
-            let count = workouts.filter { calendar.dateInterval(of: .weekOfYear, for: $0.date)?.start == start }.count
-            result.append(MuscleAnalysisWeek(start: start, workoutCount: count))
-            guard let next = calendar.date(byAdding: .weekOfYear, value: 1, to: start) else { break }
-            start = next
-        }
-        return result
-    }
-
-    private var longestStreak: Int {
-        var longest = 0
-        var ongoing = 0
-        for week in weeks {
-            ongoing = week.isActive ? ongoing + 1 : 0
-            longest = max(longest, ongoing)
-        }
-        return longest
-    }
-
-    var body: some View {
-        let history = weeks
-        let selected = history.first { $0.start == selectedWeek } ?? history.last
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    streakValue(currentStreak, title: "Текущая серия")
-                    streakValue(longestStreak, title: "Самая длинная")
-                }
-                if history.isEmpty {
-                    Text("Пока нет завершённых тренировок с записанными результатами.")
-                        .font(.footnote)
-                        .foregroundStyle(PageStyle.muted)
-                } else {
-                    Text("Недели · пн–вс")
-                        .font(.footnote.weight(.semibold))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(history.reversed())) { week in
-                                let isCurrentWeek = week.start == calendar.dateInterval(of: .weekOfYear, for: .now)?.start
-                                Button { selectedWeek = week.start } label: {
-                                    Text(week.start.formatted(.dateTime.day().month(.abbreviated)))
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(week.isActive ? ThemePalette.onAccent : PageStyle.ink)
-                                        .padding(.horizontal, 11)
-                                        .frame(height: 36)
-                                        .background(week.isActive ? PageStyle.ink : isCurrentWeek ? ThemePalette.surface : ThemePalette.soft,
-                                                    in: RoundedRectangle(cornerRadius: 11))
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 11)
-                                                .stroke(selected?.start == week.start ? PageStyle.muted : isCurrentWeek ? ThemePalette.track : .clear, lineWidth: 1)
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    if let selected,
-                       let sunday = calendar.date(byAdding: .day, value: 6, to: selected.start) {
-                        Text("\(selected.start.formatted(date: .abbreviated, time: .omitted)) — \(sunday.formatted(date: .abbreviated, time: .omitted)) · \(selected.workoutCount) тренировок")
-                            .font(.footnote)
-                            .foregroundStyle(PageStyle.muted)
-                        if selected.start == calendar.dateInterval(of: .weekOfYear, for: .now)?.start && !selected.isActive {
-                            Text("Текущая неделя ещё продолжается.")
-                                .font(.footnote)
-                                .foregroundStyle(PageStyle.muted)
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PageStyle.canvas.ignoresSafeArea())
-            .navigationTitle("Серия активных недель")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
-        }
-        .presentationDetents([.medium])
-    }
-
-    private func streakValue(_ value: Int, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(value)").font(.title2.weight(.semibold)).monospacedDigit()
-            Text(title).font(.caption).foregroundStyle(PageStyle.muted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(ThemePalette.surface, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
 private struct RecommendationDetailView: View {
     @Environment(\.dismiss) private var dismiss
     private let recommendation: TrainingRecommendation?
-    private let insight: PersonalInsight?
-    private let analysis: MuscleAnalysisSnapshot?
     private let basePeriod: DateInterval
     let period: StatsPeriod
 
     init(recommendation: TrainingRecommendation, period: StatsPeriod) {
         self.recommendation = recommendation
-        self.insight = nil
-        self.analysis = nil
         self.basePeriod = recommendation.period
-        self.period = period
-    }
-
-    init(insight: PersonalInsight, analysis: MuscleAnalysisSnapshot, period: StatsPeriod) {
-        self.recommendation = nil
-        self.insight = insight
-        self.analysis = analysis
-        self.basePeriod = insight.period
         self.period = period
     }
 
@@ -1936,7 +1866,7 @@ private struct RecommendationDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text((recommendation?.category.label ?? insight?.category.label ?? "").uppercased())
+                    Text((recommendation?.category.label ?? "").uppercased())
                         .font(.system(size: 11, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(PageStyle.muted)
@@ -2007,24 +1937,12 @@ private struct RecommendationDetailView: View {
     }
 
     private var metrics: [PersonalInsightMetric] {
-        recommendation?.metrics ?? insight?.metrics ?? []
+        recommendation?.metrics ?? []
     }
 
-    private var comparesPeriods: Bool {
-        insight != nil && metrics.contains {
-            ["В прошлом периоде", "Доля ранее", "Изменение в прошлом периоде"].contains($0.name)
-        }
-    }
+    private var evidencePeriod: DateInterval { basePeriod }
 
-    private var evidencePeriod: DateInterval {
-        if comparesPeriods, let analysis { return analysis.period }
-        return basePeriod
-    }
-
-    private var previousPeriod: DateInterval? {
-        if comparesPeriods { return analysis?.previousPeriod }
-        return recommendation?.previousPeriod
-    }
+    private var previousPeriod: DateInterval? { recommendation?.previousPeriod }
 
     private var observationLabel: String {
         switch recommendation?.category {
@@ -2066,14 +1984,50 @@ private extension RecommendationCategory {
         }
     }
 }
-private extension PersonalInsightCategory {
-    var label: String {
-        switch self {
-        case .muscleStructure: "Мышечная структура"
-        case .progress: "Прогресс"
-        case .regularity: "Регулярность"
-        case .achievement: "Достижение"
+
+private struct MuscleSetBar: View {
+    let group: MuscleActivityResult
+    let maximum: Int
+    let period: DateInterval
+    @State private var isSelected = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(group.target.category.rawValue)
+                Spacer(minLength: 8)
+                Text(group.directSets.formatted())
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+            }
+            .font(.subheadline)
+            GeometryReader { geometry in
+                Capsule()
+                    .fill(ThemePalette.track)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(PageStyle.ink.opacity(isSelected ? 1 : 0.7))
+                            .frame(width: geometry.size.width * CGFloat(group.directSets) / CGFloat(max(1, maximum)))
+                    }
+            }
+            .frame(height: 5)
+            .accessibilityHidden(true)
+            if isSelected {
+                Text("Прямые рабочие подходы: \(group.directSets) · \(period.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(period).formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption)
+                    .foregroundStyle(PageStyle.muted)
+            }
         }
+        .foregroundStyle(PageStyle.ink)
+        .contentShape(Rectangle())
+        .onTapGesture { isSelected.toggle() }
+        .onChange(of: period) { _, _ in isSelected = false }
+        .onChange(of: group.directSets) { _, _ in isSelected = false }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(group.target.category.rawValue), прямые рабочие подходы: \(group.directSets)")
+        .accessibilityValue("\(period.start.formatted(date: .abbreviated, time: .omitted)) — \(insightDisplayEnd(period).formatted(date: .abbreviated, time: .omitted))")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { isSelected.toggle() }
     }
 }
 
@@ -2087,24 +2041,29 @@ private struct MuscleStructureView: View {
     }
 
     var body: some View {
+        let snapshot = analysis
+        let groups = snapshot.groups.filter { $0.directSets > 0 || $0.indirectSets > 0 }
+        let maximum = groups.map(\.directSets).max() ?? 1
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                Text("\(period.rawValue) · \(analysis.regularity.workoutCount) тренировок")
+                Text("\(period.rawValue) · \(snapshot.regularity.workoutCount) тренировок")
                     .font(.system(size: 13)).foregroundStyle(PageStyle.muted)
-                if analysis.groups.allSatisfy({ $0.observationCount == 0 }) {
-                    Text("Пока нет выполненных подходов для анализа мышечной структуры.")
+                Text("Количество рабочих подходов по мышечным группам")
+                    .font(.footnote).foregroundStyle(PageStyle.muted)
+                if groups.isEmpty {
+                    Text("Пока нет рабочих подходов за выбранный период.")
                         .font(.system(size: 14)).foregroundStyle(PageStyle.muted)
                         .padding(18)
                 } else {
-                    ForEach(analysis.groups) { group in
+                    ForEach(groups) { group in
                         if showsAccents {
                             NavigationLink {
                                 MuscleAccentView(period: period, category: group.target.category)
                             } label: {
-                                muscleGroupRow(group, showsChevron: true)
+                                muscleGroupRow(group, maximum: maximum, period: snapshot.period, showsChevron: true)
                             }
                         } else {
-                            muscleGroupRow(group, showsChevron: false)
+                            muscleGroupRow(group, maximum: maximum, period: snapshot.period, showsChevron: false)
                         }
                     }
                 }
@@ -2112,23 +2071,28 @@ private struct MuscleStructureView: View {
             .padding(18)
         }
         .floatingTabBarClearance()
+        .frame(maxWidth: .infinity)
         .background(PageStyle.canvas.ignoresSafeArea())
-        .navigationTitle("Мышечная структура")
+        .navigationTitle("Распределение подходов")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func muscleGroupRow(_ group: MuscleActivityResult, showsChevron: Bool) -> some View {
+    private func muscleGroupRow(_ group: MuscleActivityResult, maximum: Int, period: DateInterval, showsChevron: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(group.target.category.rawValue)
-                    .font(.system(size: 17, weight: .semibold))
-                Spacer()
+                if group.directSets > 0 {
+                    MuscleSetBar(group: group, maximum: maximum, period: period)
+                } else {
+                    Text(group.target.category.rawValue)
+                        .font(.subheadline)
+                    Spacer()
+                }
                 if showsChevron {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
                 }
             }
-            Text("Прямые подходы: \(group.directSets) · Косвенные: \(group.indirectSets)")
+            Text("Косвенное участие: \(group.indirectSets) подходов")
             Text("Тренировочных дней: \(group.trainingDays)")
         }
         .font(.system(size: 13))
@@ -2173,6 +2137,7 @@ private struct MuscleAccentView: View {
             }
             .padding(18)
         }
+        .frame(maxWidth: .infinity)
         .background(PageStyle.canvas.ignoresSafeArea())
         .foregroundStyle(PageStyle.ink)
         .navigationTitle(category.rawValue)
@@ -2214,20 +2179,18 @@ private struct ExerciseAnalysisView: View {
                                 Text(trendTitle(result.trend, metric: result.metric))
                                     .font(.system(size: 14, weight: .semibold))
                                 if result.canInferTrend {
-                                    Chart {
-                                        ForEach(result.recentValues.indices, id: \.self) { index in
-                                            LineMark(x: .value("Выполнение", index + 1),
-                                                     y: .value(result.metric.label, result.recentValues[index]))
-                                                .foregroundStyle(PageStyle.ink)
-                                            PointMark(x: .value("Выполнение", index + 1),
-                                                      y: .value(result.metric.label, result.recentValues[index]))
-                                                .foregroundStyle(PageStyle.ink)
-                                        }
-                                    }
-                                    .chartXAxis(.hidden)
-                                    .chartYAxis(.hidden)
-                                    .frame(height: 42)
-                                    .accessibilityHidden(true)
+                                    InteractiveProgressChart(points: result.recentObservations,
+                                        metric: result.metric.label,
+                                        valueText: { value in
+                                            switch result.metric {
+                                            case .estimatedOneRepMax: "\(value.formatted()) кг"
+                                            case .repetitions: "\(value.formatted()) повт."
+                                            case .durationSeconds, .cardioDurationSeconds: "\(value.formatted()) сек"
+                                            case .cardioDistanceKilometers: "\(value.formatted()) км"
+                                            }
+                                        }, indexed: true, height: 42,
+                                        showsSourceWeight: result.metric == .estimatedOneRepMax)
+                                        .id("\(result.id)-\(period.rawValue)")
                                 }
                                 Text(trendExplanation(result))
                                     .foregroundStyle(PageStyle.muted)
@@ -2245,6 +2208,7 @@ private struct ExerciseAnalysisView: View {
             .padding(18)
         }
         .floatingTabBarClearance()
+        .frame(maxWidth: .infinity)
         .background(PageStyle.canvas.ignoresSafeArea())
         .navigationTitle("Прогресс")
         .navigationBarTitleDisplayMode(.inline)
@@ -2297,9 +2261,6 @@ private extension ExerciseResultMetric {
 struct SettingsView: View {
     @EnvironmentObject private var store: WorkoutStore
     @AppStorage("appAppearance") private var appearance = AppAppearance.system.rawValue
-    #if DEBUG
-    @AppStorage("debugDemoMode") private var debugDemoMode = false
-    #endif
 
     var body: some View {
         Form {
@@ -2337,13 +2298,6 @@ struct SettingsView: View {
                 .padding(3)
                 .background(ThemePalette.soft, in: Capsule())
             }
-            #if DEBUG
-            Section {
-                Toggle("Демонстрационная история", isOn: $debugDemoMode)
-            } footer: {
-                Text("Только DEBUG. Данные хранятся отдельно в памяти и не меняют ваши тренировки.")
-            }
-            #endif
             if let error = store.saveError {
                 Section { Text(error).foregroundStyle(.red) }
             }

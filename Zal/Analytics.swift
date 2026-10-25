@@ -1,5 +1,28 @@
 import Foundation
 
+struct ChartObservation: Identifiable, Equatable {
+    let id: UUID
+    let date: Date
+    let value: Double
+    let sourceSet: SetEntry?
+}
+
+enum ChartPointSelection {
+    static func nearestIndex(to position: Double, positions: [Double]) -> Int? {
+        guard position.isFinite else { return nil }
+        var nearest: Int?
+        var distance = Double.infinity
+        for index in positions.indices where positions[index].isFinite {
+            let candidate = abs(positions[index] - position)
+            if nearest == nil || candidate < distance {
+                nearest = index
+                distance = candidate
+            }
+        }
+        return nearest
+    }
+}
+
 enum StatsPeriod: String, CaseIterable, Identifiable {
     case week = "Неделя"
     case month = "Месяц"
@@ -15,10 +38,11 @@ enum StatsPeriod: String, CaseIterable, Identifiable {
     }
 }
 
-struct ActivityBucket: Identifiable {
+struct ActivityBucket: Identifiable, Equatable {
     let index: Int
     let label: String
     let count: Int
+    var period: DateInterval? = nil
     var id: Int { index }
 }
 
@@ -68,6 +92,71 @@ struct StatisticsSnapshot {
 }
 
 extension WorkoutStore {
+    private struct HistoryRecordMetric: Hashable {
+        let exerciseID: UUID
+        let type: ExerciseTrackingType
+    }
+
+    static func historyRecordCounts(in workouts: [WorkoutRecord],
+                                    score: (WorkoutExercise, Bool) -> Double?) -> [UUID: Int] {
+        guard let firstDate = workouts.filter({ $0.exercises.contains { exercise in
+            exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
+        } }).map(\.date).min(),
+              let eligible = statisticsCalendar.date(byAdding: .day, value: 7, to: statisticsCalendar.startOfDay(for: firstDate)) else { return [:] }
+        let ordered = workouts.sorted { $0.date < $1.date }
+        var best: [HistoryRecordMetric: Double] = [:]
+        var counts: [UUID: Int] = [:]
+        var index = 0
+        while index < ordered.count {
+            let date = ordered[index].date
+            var pending: [HistoryRecordMetric: Double] = [:]
+            repeat {
+                let workout = ordered[index]
+                var current: [HistoryRecordMetric: Double] = [:]
+                for exercise in workout.exercises where exercise.trackingType != .cardio {
+                    guard let value = score(exercise, false) else { continue }
+                    let key = HistoryRecordMetric(exerciseID: exercise.exerciseID, type: exercise.trackingType)
+                    current[key] = max(current[key] ?? value, value)
+                }
+                counts[workout.id] = date >= eligible ? current.filter { key, value in
+                    best[key].map { value > $0 } ?? false
+                }.count : 0
+                if !workout.isTemplate {
+                    for (key, value) in current { pending[key] = max(pending[key] ?? value, value) }
+                }
+                index += 1
+            } while index < ordered.count && ordered[index].date == date
+            // Equal timestamps are not previous workouts for each other.
+            for (key, value) in pending { best[key] = max(best[key] ?? value, value) }
+        }
+        return counts
+    }
+
+    // Retain the single-workout API; lists use the batch calculation above.
+    static func historyRecordCount(for workout: WorkoutRecord, in workouts: [WorkoutRecord],
+                                   score: (WorkoutExercise, Bool) -> Double?) -> Int {
+        let calendar = statisticsCalendar
+        guard let firstDate = workouts.filter({ $0.exercises.contains { exercise in
+            exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
+        } }).map(\.date).min(),
+              let eligible = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: firstDate)),
+              workout.date >= eligible else { return 0 }
+        let earlier = workouts.filter { !$0.isTemplate && $0.date < workout.date }
+        var counted = Set<String>()
+        return workout.exercises.reduce(0) { total, exercise in
+            guard exercise.trackingType != .cardio else { return total }
+            let prior = earlier.flatMap(\.exercises).filter { $0.exerciseID == exercise.exerciseID && $0.trackingType == exercise.trackingType }
+            guard !prior.isEmpty else { return total }
+            let dimensions = exercise.trackingType == .cardio ? [false, true] : [false]
+            return total + dimensions.filter { distance in
+                guard let current = score(exercise, distance),
+                      let previous = prior.compactMap({ score($0, distance) }).max(), current > previous else { return false }
+                let key = "\(exercise.exerciseID.uuidString)-\(exercise.trackingType.rawValue)-\(distance)"
+                return counted.insert(key).inserted
+            }.count
+        }
+    }
+
     func cardioHistory(for exerciseID: UUID) -> [CardioSession] {
         StatisticsSnapshot(workouts: workouts, buckets: []).cardioSessions.filter { $0.exerciseID == exerciseID }
     }
@@ -84,7 +173,7 @@ extension WorkoutStore {
             return StatisticsSnapshot(workouts: [], buckets: [])
         }
         let included = workouts.filter { workout in
-            interval.contains(workout.date) && workout.exercises.contains { exercise in
+            workout.date >= interval.start && workout.date < interval.end && workout.date <= date && workout.exercises.contains { exercise in
                 exercise.sets.contains { $0.hasRecordedResult(for: exercise.trackingType) }
             }
         }
@@ -95,7 +184,8 @@ extension WorkoutStore {
             let labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
             buckets = (0..<7).map { index in
                 let day = calendar.date(byAdding: .day, value: index, to: interval.start)!
-                return ActivityBucket(index: index, label: labels[index], count: included.filter { calendar.isDate($0.date, inSameDayAs: day) }.count)
+                return ActivityBucket(index: index, label: labels[index], count: included.filter { calendar.isDate($0.date, inSameDayAs: day) }.count,
+                                      period: calendar.dateInterval(of: .day, for: day))
             }
         case .month:
             var monthlyBuckets: [ActivityBucket] = []
@@ -110,7 +200,8 @@ extension WorkoutStore {
                     let first = calendar.component(.day, from: rangeStart)
                     let last = calendar.component(.day, from: lastDay)
                     let count = included.filter { $0.date >= rangeStart && $0.date < rangeEnd }.count
-                    monthlyBuckets.append(ActivityBucket(index: monthlyBuckets.count, label: "\(first)–\(last)", count: count))
+                    monthlyBuckets.append(ActivityBucket(index: monthlyBuckets.count, label: "\(first)–\(last)", count: count,
+                                                         period: DateInterval(start: rangeStart, end: rangeEnd)))
                 }
                 weekStart = week.end
             }
@@ -118,7 +209,9 @@ extension WorkoutStore {
         case .year:
             let labels = ["Я", "Ф", "М", "А", "М", "И", "И", "А", "С", "О", "Н", "Д"]
             buckets = (0..<12).map { index in
-                ActivityBucket(index: index, label: labels[index], count: included.filter { calendar.component(.month, from: $0.date) == index + 1 }.count)
+                let start = calendar.date(byAdding: .month, value: index, to: interval.start)!
+                return ActivityBucket(index: index, label: labels[index], count: included.filter { calendar.component(.month, from: $0.date) == index + 1 }.count,
+                                      period: calendar.dateInterval(of: .month, for: start))
             }
         }
         return StatisticsSnapshot(workouts: included, buckets: buckets)

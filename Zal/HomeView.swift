@@ -51,7 +51,7 @@ struct HomeView: View
         {
             VStack(alignment: .leading, spacing: -2)
             {
-                Text("GymTreker")
+                Text("Flow")
                     .font(.system(size: 39, weight: .bold, design: .default))
                     .tracking(-1.3)
                     .foregroundStyle(Palette.ink)
@@ -180,22 +180,7 @@ struct HomeView: View
             .padding(3)
             .background(Palette.soft, in: Capsule())
 
-            HStack(alignment: .bottom, spacing: 0) {
-                ForEach(snapshot.buckets) { bucket in
-                    VStack(spacing: 5) {
-                        Capsule()
-                            .fill(bucket.count > 0 ? Palette.ink : ThemePalette.track)
-                            .frame(width: period == .year ? 7 : 9, height: CGFloat(max(8, min(49, bucket.count * 21))))
-                            .frame(height: 43, alignment: .bottom)
-                        Text(bucket.label)
-                            .font(.system(size: 10))
-                            .foregroundStyle(bucket.count > 0 ? Palette.ink : Palette.muted)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
+            ActivityBars(buckets: snapshot.buckets, period: period)
 
             HStack(spacing: 0) {
                 metric(value: "\(snapshot.workoutCount)", label: "Тренировки", symbol: "dumbbell")
@@ -265,6 +250,53 @@ struct HomeView: View
 private enum HomeDestination: Hashable, Identifiable {
     case insights, settings
     var id: Self { self }
+}
+
+private struct ActivityBars: View {
+    let buckets: [ActivityBucket]
+    let period: StatsPeriod
+    @State private var selectedID: Int?
+
+    private func detail(_ bucket: ActivityBucket) -> String {
+        guard let interval = bucket.period else { return "\(bucket.label) · Тренировки: \(bucket.count)" }
+        let lastDay = interval.end.addingTimeInterval(-1)
+        return "\(interval.start.formatted(date: .abbreviated, time: .omitted)) — \(lastDay.formatted(date: .abbreviated, time: .omitted)) · Тренировки: \(bucket.count)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .bottom, spacing: 0) {
+                ForEach(buckets) { bucket in
+                    Button { selectedID = selectedID == bucket.id ? nil : bucket.id } label: {
+                        VStack(spacing: 5) {
+                            Capsule()
+                                .fill(selectedID == bucket.id ? ThemePalette.muted : bucket.count > 0 ? Palette.ink : ThemePalette.track)
+                                .frame(width: period == .year ? 7 : 9, height: CGFloat(max(8, min(49, bucket.count * 21))))
+                                .frame(height: 43, alignment: .bottom)
+                            Text(bucket.label)
+                                .font(.system(size: 10))
+                                .foregroundStyle(bucket.count > 0 ? Palette.ink : Palette.muted)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(detail(bucket))
+                    .accessibilityAddTraits(selectedID == bucket.id ? [.isSelected] : [])
+                }
+            }
+            if let bucket = buckets.first(where: { $0.id == selectedID }) {
+                Text(detail(bucket))
+                    .font(.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onChange(of: period) { _, _ in selectedID = nil }
+        .onChange(of: buckets) { _, _ in selectedID = nil }
+    }
 }
 
 private struct WeekProgressRing: View {

@@ -269,6 +269,7 @@ struct InsightsSnapshot {
     let weeks: [RegularityWeek]
     let regularityComparison: String?
     let observations: [Insight]
+    var dataError: String? = nil
 }
 
 @MainActor enum InsightsEngine {
@@ -287,6 +288,14 @@ struct InsightsSnapshot {
     }
 
     static func snapshot(workouts: [WorkoutRecord], definitions: [ExerciseDefinition], now: Date = .now) -> InsightsSnapshot {
+        let definitionIndex: [UUID: ExerciseDefinition]
+        do {
+            definitionIndex = try WorkoutDataValidation.exerciseIndex(definitions)
+            try WorkoutDataValidation.records(workouts)
+        } catch {
+            return InsightsSnapshot(featured: nil, progress: [], records: [], balance: [], weeks: [],
+                                    regularityComparison: nil, observations: [], dataError: error.localizedDescription)
+        }
         let calendar = WorkoutStore.statisticsCalendar
         let cutoff = calendar.date(byAdding: .day, value: -30, to: now) ?? now
         let history = workouts.filter { workout in
@@ -295,12 +304,12 @@ struct InsightsSnapshot {
             }
         }
         let recentWorkouts = history.filter { $0.date >= cutoff }
-        let categories = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0.category) })
-        let maps = Dictionary(uniqueKeysWithValues: definitions.map { definition in
-            (definition.id, MuscleMap(primaryGroup: definition.trackingType == .cardio ? nil : definition.category,
+        let categories = definitionIndex.mapValues(\.category)
+        let maps = definitionIndex.mapValues { definition in
+            MuscleMap(primaryGroup: definition.trackingType == .cardio ? nil : definition.category,
                                       primaryAccent: definition.muscleAccent,
-                                      secondaryMuscles: definition.secondaryMuscles))
-        })
+                                      secondaryMuscles: definition.secondaryMuscles)
+        }
         let analysis = MuscleAnalysisEngine.analyze(workouts: history, muscleMaps: maps, period: .month, relativeTo: now)
         let personal = personalInsights(from: analysis)
         let sessions = groupedSessions(history)

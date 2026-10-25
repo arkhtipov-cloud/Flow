@@ -13,9 +13,9 @@
 		A10000000000000000000013 /* WorkoutViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* WorkoutViews.swift */; };
 		A10000000000000000000016 /* Analytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Analytics.swift */; };
 		A10000000000000000000018 /* InsightsEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* InsightsEngine.swift */; };
+		A1000000000000000000001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* Assets.xcassets */; };
 		A1000000000000000000001D /* MuscleAnalysisEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* MuscleAnalysisEngine.swift */; };
 		A1000000000000000000002F /* RecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000030 /* RecommendationEngine.swift */; };
-		A1000000000000000000001A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,9 +26,9 @@
 		A10000000000000000000015 /* WorkoutViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutViews.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* Analytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Analytics.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* InsightsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsEngine.swift; sourceTree = "<group>"; };
+		A1000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1000000000000000000001E /* MuscleAnalysisEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuscleAnalysisEngine.swift; sourceTree = "<group>"; };
 		A10000000000000000000030 /* RecommendationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationEngine.swift; sourceTree = "<group>"; };
-		A1000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -164,7 +164,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = BQ29C7AM8U;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = GymTreker;
+				INFOPLIST_KEY_CFBundleDisplayName = Flow;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				MARKETING_VERSION = 0.1.0;
@@ -184,7 +184,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = BQ29C7AM8U;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = GymTreker;
+				INFOPLIST_KEY_CFBundleDisplayName = Flow;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				MARKETING_VERSION = 0.1.0;

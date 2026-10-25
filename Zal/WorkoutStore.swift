@@ -91,9 +91,6 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
         guard !isCustom else { return [] }
         switch name {
         case "Бабочка": return ["Бабочка (сведение рук в тренажёре)", "Pec Deck", "Пек-дек"]
-        case "Жим от груди в тренажёре": return ["Жим в грудном тренажёре"]
-        case "Сгибание рук в тренажёре": return ["Сгибание рук в тренажёре на бицепс"]
-        case "Жим на плечи в тренажёре": return ["Жим плечами в тренажёре"]
         case "Тяга горизонтального блока": return ["Горизонтальная тяга блока"]
         case "Разгибание рук на блоке": return ["Разгибание рук на верхнем блоке"]
         default: return []
@@ -101,6 +98,7 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
     }
 
     func matchesSearch(_ query: String) -> Bool {
+        guard isAvailableInLibrary else { return false }
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return query.isEmpty || ([name] + searchAliases).contains { $0.localizedStandardContains(query) }
     }
@@ -130,7 +128,21 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
         secondaryMuscles = try values.decodeIfPresent([MuscleTarget].self, forKey: .secondaryMuscles) ?? []
     }
 
-    static let builtIn: [ExerciseDefinition] = {
+    // Retired definitions remain available for historical MuscleMap lookup, not for adding exercises.
+    var isAvailableInLibrary: Bool {
+        isCustom || !Self.retiredBuiltInIDs.contains(id)
+    }
+
+    private static let retiredBuiltInIDs: Set<UUID> = [
+        UUID(uuidString: "00000000-0000-4000-8000-00000000002F")!,
+        UUID(uuidString: "00000000-0000-4000-8000-000000000030")!,
+        UUID(uuidString: "00000000-0000-4000-8000-000000000031")!,
+        UUID(uuidString: "00000000-0000-4000-8000-000000000032")!
+    ]
+
+    static let builtIn = historicalBuiltIn.filter(\.isAvailableInLibrary)
+
+    static let historicalBuiltIn: [ExerciseDefinition] = {
         let groups: [(ExerciseCategory, [String])] = [
             (.chest, ["Жим штанги лёжа", "Жим гантелей лёжа", "Жим гантелей на наклонной скамье", "Сведение рук в кроссовере", "Отжимания на брусьях"]),
             (.back, ["Подтягивания", "Подтягивания с весом", "Тяга штанги к поясу", "Тяга гантели одной рукой", "Тяга верхнего блока", "Тяга горизонтального блока"]),
@@ -266,7 +278,7 @@ struct ExerciseDefinition: Identifiable, Codable, Hashable {
               let shoulderPressID = UUID(uuidString: "00000000-0000-4000-8000-000000000032") else { return original }
         let cableReverseCurl = ExerciseDefinition(id: cableReverseCurlID, name: "Обратные сгибания рук в кроссовере", category: .forearms, isCustom: false, illustrationID: illustrations["Обратные сгибания рук в кроссовере"], trackingType: .weightReps, muscleAccent: accents["Обратные сгибания рук в кроссовере"], secondaryMuscles: secondaries["Обратные сгибания рук в кроссовере"] ?? [])
         let pecDeck = ExerciseDefinition(id: pecDeckID, name: "Бабочка", category: .chest,
-                                         isCustom: false, trackingType: .weightReps, muscleAccent: "Средняя часть груди")
+                                         isCustom: false, illustrationID: "chest_pec_deck", trackingType: .weightReps, muscleAccent: "Средняя часть груди")
         let machines = [
             ExerciseDefinition(id: chestPressID, name: "Жим от груди в тренажёре", category: .chest, isCustom: false,
                                trackingType: .weightReps, muscleAccent: "Средняя часть груди",
@@ -312,7 +324,48 @@ struct SetEntry: Identifiable, Codable, Hashable {
     }
 }
 
+enum SetInputValidation {
+    enum InputError: LocalizedError {
+        case number, duration
+
+        var errorDescription: String? {
+            switch self {
+            case .number: "Введите неотрицательное число допустимого размера."
+            case .duration: "Проверьте время: минуты неотрицательные, секунды — от 0 до 59; значение не должно быть слишком большим."
+            }
+        }
+    }
+
+    static func decimal(_ text: String) throws -> Double {
+        if text.isEmpty { return 0 }
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")), value.isFinite, value >= 0 else {
+            throw InputError.number
+        }
+        return value
+    }
+
+    static func integer(_ text: String) throws -> Int {
+        if text.isEmpty { return 0 }
+        guard let value = Int(text), value >= 0 else { throw InputError.number }
+        return value
+    }
+
+    static func duration(minutes: String, seconds: String) throws -> Int {
+        guard let minutes = try? integer(minutes), let seconds = try? integer(seconds), seconds < 60 else {
+            throw InputError.duration
+        }
+        let (base, multiplyOverflow) = minutes.multipliedReportingOverflow(by: 60)
+        let (total, addOverflow) = base.addingReportingOverflow(seconds)
+        guard !multiplyOverflow, !addOverflow else { throw InputError.duration }
+        return total
+    }
+}
+
 extension SetEntry {
+    var hasFiniteNumbers: Bool {
+        weight.isFinite && (distanceKilometers?.isFinite ?? true)
+    }
+
     func hasRecordedResult(for type: ExerciseTrackingType) -> Bool {
         switch type {
         case .weightReps: weight.isFinite && weight > 0 && repetitions > 0
@@ -430,15 +483,64 @@ struct SplitPlan: Codable {
     var nextTemplateID: UUID?
 }
 
+enum WorkoutDataValidation {
+    struct DuplicateID: LocalizedError {
+        let context: String
+        let id: UUID
+        var errorDescription: String? { "Повторяющийся UUID в \(context): \(id.uuidString). Данные неоднозначны." }
+    }
+
+    static func exerciseIndex(_ definitions: [ExerciseDefinition]) throws -> [UUID: ExerciseDefinition] {
+        var index: [UUID: ExerciseDefinition] = [:]
+        for definition in definitions {
+            guard index[definition.id] == nil else { throw DuplicateID(context: "каталоге упражнений", id: definition.id) }
+            index[definition.id] = definition
+        }
+        return index
+    }
+
+    private static func requireUnique(_ ids: [UUID], context: String) throws {
+        var seen = Set<UUID>()
+        for id in ids where !seen.insert(id).inserted { throw DuplicateID(context: context, id: id) }
+    }
+
+    static func records(_ records: [WorkoutRecord]) throws {
+        try requireUnique(records.map(\.id), context: "истории тренировок")
+        for record in records {
+            try requireUnique(record.exercises.map(\.id), context: "упражнениях тренировки \(record.id)")
+            for exercise in record.exercises {
+                try requireUnique(exercise.sets.map(\.id), context: "подходах упражнения \(exercise.id)")
+            }
+        }
+    }
+
+    static func splitPlan(_ plan: SplitPlan) throws {
+        try requireUnique(plan.templates.map(\.id), context: "шаблонах сплита")
+        for template in plan.templates {
+            try requireUnique(template.exercises.map(\.id), context: "упражнениях шаблона \(template.id)")
+        }
+    }
+}
+
 @MainActor
 final class WorkoutStore: ObservableObject {
     @Published private(set) var records: [WorkoutRecord] = []
-    @Published private(set) var exercises: [ExerciseDefinition] = ExerciseDefinition.builtIn
+    @Published private(set) var exercises: [ExerciseDefinition] = ExerciseDefinition.historicalBuiltIn
     @Published private(set) var splitPlan = SplitPlan()
     @Published var weeklyGoal = 4 {
-        didSet { save() }
+        didSet {
+            guard !isRestoringWeeklyGoal else { return }
+            guard canModifyStoredData() else {
+                isRestoringWeeklyGoal = true
+                weeklyGoal = oldValue
+                isRestoringWeeklyGoal = false
+                return
+            }
+            save()
+        }
     }
     @Published private(set) var saveError: String?
+    var loadError: String? { loadFailureMessage }
 
     private struct SavedData: Codable {
         var records: [WorkoutRecord]
@@ -449,6 +551,9 @@ final class WorkoutStore: ObservableObject {
 
     private let fileURL: URL
     private let isEphemeral: Bool
+    private var isLoading = false
+    private var isRestoringWeeklyGoal = false
+    private var loadFailureMessage: String?
 
     init(fileURL: URL? = nil, isEphemeral: Bool = false) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -470,12 +575,20 @@ final class WorkoutStore: ObservableObject {
     }
 
     func setSplitEnabled(_ enabled: Bool) {
+        guard canModifyStoredData() else { return }
         splitPlan.isEnabled = enabled
         if splitPlan.nextTemplateID == nil { splitPlan.nextTemplateID = splitPlan.templates.first?.id }
         save()
     }
 
     func upsertSplitTemplate(_ template: SplitWorkoutTemplate) {
+        guard canModifyStoredData() else { return }
+        do {
+            try WorkoutDataValidation.splitPlan(SplitPlan(templates: [template]))
+        } catch {
+            saveError = "Шаблон не сохранён: \(error.localizedDescription)"
+            return
+        }
         if let index = splitPlan.templates.firstIndex(where: { $0.id == template.id }) {
             splitPlan.templates[index] = template
         } else {
@@ -486,6 +599,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func deleteSplitTemplates(at offsets: IndexSet) {
+        guard canModifyStoredData() else { return }
         let oldTemplates = splitPlan.templates
         let removedNext = offsets.contains { oldTemplates[$0].id == splitPlan.nextTemplateID }
         for index in offsets.sorted(by: >) { splitPlan.templates.remove(at: index) }
@@ -494,6 +608,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func moveSplitTemplates(from source: IndexSet, to destination: Int) {
+        guard canModifyStoredData() else { return }
         let moving = source.sorted().map { splitPlan.templates[$0] }
         for index in source.sorted(by: >) { splitPlan.templates.remove(at: index) }
         let target = destination - source.filter { $0 < destination }.count
@@ -502,6 +617,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func skipNextSplitTemplate(on date: Date) {
+        guard canModifyStoredData() else { return }
         guard let nextSplitTemplate else { return }
         records.removeAll {
             $0.splitTemplateID == nextSplitTemplate.id &&
@@ -514,6 +630,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func prepareNextSplitWorkout(on date: Date) -> WorkoutRecord? {
+        guard canModifyStoredData() else { return nil }
         guard let template = nextSplitTemplate else { return nil }
         let calendar = Calendar.current
         if let existing = records.first(where: { !$0.isTemplate && $0.splitTemplateID == template.id && $0.splitCompletionRecorded != true && calendar.isDate($0.date, inSameDayAs: date) }) {
@@ -556,6 +673,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func completeSplitWorkout(_ recordID: UUID) {
+        guard canModifyStoredData() else { return }
         guard let index = records.firstIndex(where: { $0.id == recordID }),
               let templateID = records[index].splitTemplateID,
               records[index].splitCompletionRecorded != true,
@@ -572,16 +690,16 @@ final class WorkoutStore: ObservableObject {
     }
 
     var thisWeekCount: Int {
-        guard let interval = Self.statisticsCalendar.dateInterval(of: .weekOfYear, for: .now) else { return 0 }
-        return workouts.filter { interval.contains($0.date) && hasRecordedResult($0) }.count
+        snapshot(for: .week).workoutCount
     }
 
     var streakWeeks: Int {
         let calendar = Self.statisticsCalendar
-        let activeWeeks = Set(workouts.filter { hasRecordedResult($0) }.compactMap {
+        let now = Date()
+        let activeWeeks = Set(workouts.filter { $0.date <= now && hasRecordedResult($0) }.compactMap {
             calendar.dateInterval(of: .weekOfYear, for: $0.date)?.start
         })
-        guard var week = calendar.dateInterval(of: .weekOfYear, for: .now)?.start else { return 0 }
+        guard var week = calendar.dateInterval(of: .weekOfYear, for: now)?.start else { return 0 }
         if !activeWeeks.contains(week) {
             guard let previous = calendar.date(byAdding: .weekOfYear, value: -1, to: week) else { return 0 }
             week = previous
@@ -596,15 +714,22 @@ final class WorkoutStore: ObservableObject {
     }
 
     var thisWeekActivity: [Int] {
-        let calendar = Self.statisticsCalendar
-        guard let interval = calendar.dateInterval(of: .weekOfYear, for: .now) else { return Array(repeating: 0, count: 7) }
-        return (0..<7).map { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: interval.start) else { return 0 }
-            return workouts.filter { calendar.isDate($0.date, inSameDayAs: day) && hasRecordedResult($0) }.count
-        }
+        snapshot(for: .week).buckets.map(\.count)
     }
 
-    func upsert(_ record: WorkoutRecord) {
+    @discardableResult
+    func upsert(_ record: WorkoutRecord) -> Bool {
+        guard canModifyStoredData() else { return false }
+        do {
+            try WorkoutDataValidation.records([record])
+        } catch {
+            saveError = "Тренировка не сохранена: \(error.localizedDescription)"
+            return false
+        }
+        guard record.exercises.allSatisfy({ $0.sets.allSatisfy(\.hasFiniteNumbers) }) else {
+            saveError = "Тренировка не сохранена: вес и дистанция должны быть конечными числами. Проверьте введённые значения."
+            return false
+        }
         var record = record
         if record.splitTemplateID != nil {
             record.splitCompletionRecorded = records.first(where: { $0.id == record.id })?.splitCompletionRecorded
@@ -615,15 +740,21 @@ final class WorkoutStore: ObservableObject {
             record.exercises[index].muscleMapSnapshot = previous?.exercises.first(where: { $0.id == item.id })?.muscleMapSnapshot
                 ?? muscleMap(for: item.exerciseID)
         }
+        let previousRecords = records
         if let index = records.firstIndex(where: { $0.id == record.id }) {
             records[index] = record
         } else {
             records.append(record)
         }
-        save()
+        guard save() else {
+            records = previousRecords
+            return false
+        }
+        return true
     }
 
     func moveExercise(_ exerciseID: UUID, to targetID: UUID, in workoutID: UUID) {
+        guard canModifyStoredData() else { return }
         guard var workout = records.first(where: { $0.id == workoutID }) else { return }
         let previousOrder = workout.exercises.map(\.id)
         workout.moveExercise(exerciseID, to: targetID)
@@ -632,6 +763,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func delete(_ record: WorkoutRecord) {
+        guard canModifyStoredData() else { return }
         records.removeAll { $0.id == record.id }
         save()
     }
@@ -649,6 +781,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func addExercise(named name: String, category: ExerciseCategory, trackingType: ExerciseTrackingType = .weightReps, muscleAccent: String? = nil, secondaryMuscles: [MuscleTarget] = [], imageData: Data? = nil) {
+        guard canModifyStoredData() else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !exercises.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
@@ -663,11 +796,11 @@ final class WorkoutStore: ObservableObject {
     }
 
     func renameExercise(_ exercise: ExerciseDefinition, to name: String, category: ExerciseCategory? = nil, trackingType: ExerciseTrackingType? = nil, muscleAccent: String? = nil, secondaryMuscles: [MuscleTarget] = [], imageData: Data? = nil, removeImage: Bool = false) {
-        guard exercise.isCustom else { return }
+        guard canModifyStoredData() else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              !exercises.contains(where: { $0.id != exercise.id && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }),
-              let index = exercises.firstIndex(where: { $0.id == exercise.id }) else { return }
+              let index = exercises.firstIndex(where: { $0.id == exercise.id }),
+              exercises[index].isCustom else { return }
         exercises[index].name = trimmed
         if let category { exercises[index].category = category }
         if let trackingType { exercises[index].trackingType = trackingType }
@@ -719,6 +852,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func deleteExercise(_ exercise: ExerciseDefinition) {
+        guard canModifyStoredData() else { return }
         guard exercise.isCustom else { return }
         exercises.removeAll { $0.id == exercise.id }
         // Existing workout entries keep their names and results.
@@ -726,16 +860,33 @@ final class WorkoutStore: ObservableObject {
     }
 
     private func load() {
+        isLoading = true
+        defer { isLoading = false }
         do {
             let data = try Data(contentsOf: fileURL)
             let saved = try JSONDecoder().decode(SavedData.self, from: data)
-            records = saved.records
-            splitPlan = saved.splitPlan ?? SplitPlan()
+            _ = try WorkoutDataValidation.exerciseIndex(saved.exercises)
+            for exercise in saved.exercises where exercise.isCustom && ExerciseDefinition.historicalBuiltIn.contains(where: { $0.id == exercise.id }) {
+                throw WorkoutDataValidation.DuplicateID(context: "пользовательском и встроенном каталогах", id: exercise.id)
+            }
+            try WorkoutDataValidation.records(saved.records)
+            let loadedSplitPlan = saved.splitPlan ?? SplitPlan()
+            try WorkoutDataValidation.splitPlan(loadedSplitPlan)
             let legacy = saved.exercises.map { exercise -> ExerciseDefinition in
-                guard let standard = ExerciseDefinition.builtIn.first(where: { $0.id == exercise.id || $0.name == exercise.name }) else { return exercise }
+                guard !exercise.isCustom else { return exercise }
+                let matchingID = ExerciseDefinition.historicalBuiltIn.first { $0.id == exercise.id }
+                let matchingNames = ExerciseDefinition.historicalBuiltIn.filter { $0.name == exercise.name }
+                guard let standard = matchingID ?? (matchingNames.count == 1 ? matchingNames.first : nil) else { return exercise }
                 return ExerciseDefinition(id: exercise.id, name: standard.name, category: standard.category, isCustom: false, illustrationID: standard.illustrationID, trackingType: standard.trackingType, muscleAccent: standard.muscleAccent, secondaryMuscles: standard.secondaryMuscles)
             }
-            exercises = ExerciseDefinition.builtIn.filter { standard in !legacy.contains(where: { $0.name == standard.name }) } + legacy
+            let loadedExercises = ExerciseDefinition.historicalBuiltIn.filter { standard in
+                !legacy.contains { !$0.isCustom && ($0.id == standard.id || $0.name == standard.name) }
+            } + legacy
+            _ = try WorkoutDataValidation.exerciseIndex(loadedExercises)
+            // Apply only after the complete decoded state has passed validation.
+            records = saved.records
+            splitPlan = loadedSplitPlan
+            exercises = loadedExercises
             for recordIndex in records.indices {
                 for itemIndex in records[recordIndex].exercises.indices where records[recordIndex].exercises[itemIndex].muscleMapSnapshot == nil {
                     let id = records[recordIndex].exercises[itemIndex].exerciseID
@@ -743,25 +894,41 @@ final class WorkoutStore: ObservableObject {
                 }
             }
             weeklyGoal = max(1, min(7, saved.weeklyGoal))
-        } catch CocoaError.fileReadNoSuchFile {
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile &&
+            (try? FileManager.default.attributesOfItem(atPath: fileURL.path)) == nil {
             // A new installation has no file yet.
         } catch {
-            saveError = "Не удалось загрузить сохранённые данные: \(error.localizedDescription)"
+            let message = "Не удалось загрузить сохранённые данные. Запись заблокирована, чтобы не перезаписать исходный файл. \(error.localizedDescription)"
+            loadFailureMessage = message
+            saveError = message
         }
     }
 
-    private func save() {
-        guard !isEphemeral else { return }
+    private func canModifyStoredData() -> Bool {
+        guard let loadFailureMessage else { return true }
+        saveError = loadFailureMessage
+        return false
+    }
+
+    @discardableResult
+    private func save() -> Bool {
+        guard !isLoading, canModifyStoredData() else { return false }
+        guard !isEphemeral else {
+            saveError = nil
+            return true
+        }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let savedExercises = exercises.filter { exercise in
-                exercise.isCustom || !ExerciseDefinition.builtIn.contains(where: { $0.id == exercise.id })
+                exercise.isCustom || !ExerciseDefinition.historicalBuiltIn.contains(where: { $0.id == exercise.id })
             }
             let data = try JSONEncoder().encode(SavedData(records: records, exercises: savedExercises, weeklyGoal: weeklyGoal, splitPlan: splitPlan))
             try data.write(to: fileURL, options: .atomic)
             saveError = nil
+            return true
         } catch {
             saveError = "Не удалось сохранить данные: \(error.localizedDescription)"
+            return false
         }
     }
 }
